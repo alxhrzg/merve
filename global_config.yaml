@@ -1,0 +1,69 @@
+# Global Configuration for MLServer FastAPI Wrapper
+# This file centralizes all hardcoded settings in the project
+
+server:
+  # Default server settings
+  default_host: "0.0.0.0"
+  default_port: 8000
+  default_log_level: "INFO"
+  default_workers: 1
+  health_endpoint_port: 8000
+  container_test_port: 8012
+
+monitoring:
+  # Monitoring and observability settings
+  prometheus_host: "localhost"
+  prometheus_port: 9090
+  grafana_host: "localhost"
+  grafana_port: 3000
+  grafana_credentials: "admin/admin123"
+  metrics_endpoint: "/metrics"
+
+container:
+  # Container and Docker settings
+  default_base_image: "python:3.11-slim"
+  python_version_threshold: "3.11"
+  temp_dir: "/tmp"
+  excluded_patterns:
+    - ".vscode"
+    - ".idea"
+    - "*.log"
+    - "*.tmp"
+    - "catboost_info"
+    - "*.swp"
+    - ".git"
+    - ".gitignore"
+    - "__pycache__"
+    - "*.pyc"
+    - ".pytest_cache"
+    - ".coverage"
+    - "htmlcov"
+    - ".DS_Store"
+    - "node_modules"
+    - ".env"
+    - "venv"
+    - ".venv"
+
+files:
+  # File system and path settings
+  server_log_file: "server.log"
+  server_pid_file: "server.pid"
+  global_config_file: "global_config.yaml"
+  venv_path: "/Users/peter/Desktop/enmacc/.venv"
+  ml_server_path: "/Users/peter/Desktop/enmacc/.venv/bin/ml_server"
+
+development:
+  # Development and testing settings
+  test_base_url: "http://localhost:8000"
+  load_test_users: 5
+  load_test_spawn_rate: 1
+  load_test_duration: 60
+
+load_testing:
+  # Load testing specific settings
+  stress_test_users: 50
+  stress_test_spawn_rate: 10
+  stress_test_duration: 300
+  endurance_test_users: 10
+  endurance_test_spawn_rate: 2
+  endurance_test_duration: 1800

@@ -1,0 +1,119 @@
+
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mlserver-fastapi-wrapper"
+version = "0.2.0"
+description = "Wrap any Python predictor class into a FastAPI inference API via a simple YAML config."
+readme = "README.md"
+authors = [{ name = "Your Name" }]
+requires-python = ">=3.9"
+dependencies = [
+  "fastapi>=0.110",
+  "uvicorn[standard]>=0.23",
+  "pydantic>=2.4",
+  "pyyaml>=6.0",
+  "numpy>=1.24",
+  "pandas>=2.0",
+  "scikit-learn>=1.1",
+  "catboost>=1.2",
+  "prometheus-client>=0.20.0",
+  "nbformat>=5.0",
+  "httpx>=0.24",
+  "typer>=0.17.4",
+  "rich>=13.8.1",
+  "semver>=3.0.0",
+]
+
+[project.optional-dependencies]
+test = [
+  "pytest>=7.0",
+  "pytest-asyncio>=0.21",
+  "pytest-cov>=4.0",
+  "httpx>=0.24",
+  "respx>=0.20",
+  "locust>=2.15"
+]
+
+build = [
+  "docker>=6.0.0"
+]
+
+validation = [
+  "docker>=6.0.0"
+]
+
+dev = [
+  "pytest>=7.0",
+  "pytest-asyncio>=0.21",
+  "pytest-cov>=4.0",
+  "httpx>=0.24",
+  "respx>=0.20",
+  "locust>=2.15",
+  "docker>=6.0.0",
+]
+
+[project.scripts]
+mlserver = "mlserver.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["mlserver", "mlserver.*", "examples"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = [
+  "--cov=mlserver",
+  "--cov-report=term-missing",
+  "--cov-report=html:htmlcov",
+  "--cov-report=json:coverage.json",
+  "--cov-report=xml:coverage.xml",
+  "--cov-branch",
+  "--cov-fail-under=80",
+  "-v"
+]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+
+[tool.coverage.run]
+source = ["mlserver"]
+omit = [
+  "*/tests/*",
+  "*/test_*",
+  "*/__pycache__/*",
+  "*/site-packages/*",
+  "*/examples/*",
+  "*/docs/*"
+]
+branch = true
+
+[tool.coverage.report]
+exclude_lines = [
+  "pragma: no cover",
+  "def __repr__",
+  "if self.debug:",
+  "if settings.DEBUG",
+  "raise AssertionError",
+  "raise NotImplementedError",
+  "if 0:",
+  "if __name__ == .__main__.:",
+  "pass",
+  "except ImportError:"
+]
+show_missing = true
+skip_covered = false
+sort = "Cover"
+
+[tool.coverage.html]
+directory = "htmlcov"
+title = "MLServer FastAPI Wrapper Coverage Report"
+
+[tool.coverage.xml]
+output = "coverage.xml"
+
+[tool.coverage.json]
+output = "coverage.json"

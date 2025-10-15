@@ -1,0 +1,5 @@
+# Additional dependencies for Titanic classifier
+numpy>=1.16.0
+catboost>=1.2
+scikit-learn>=1.7.2
+pandas>=2.0
