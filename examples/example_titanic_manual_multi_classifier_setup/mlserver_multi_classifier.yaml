@@ -1,0 +1,143 @@
+# Multi-Classifier MLServer Configuration
+# This configuration defines multiple classifiers in a single repository
+# Each classifier can be deployed independently with its own version
+
+# Global server configuration (shared by all classifiers)
+server:
+  title: "Titanic Survival Prediction Service"
+  host: 0.0.0.0
+  port: 8000
+  log_level: INFO
+  workers: 1
+  cors:
+    allow_origins: ["*"]
+
+# Global observability configuration
+observability:
+  metrics: true
+  metrics_endpoint: "/metrics"
+  structured_logging: true
+  log_payloads: false
+  correlation_ids: true
+
+# Repository metadata
+repository:
+  name: "titanic-multi-classifier"
+  description: "Multiple Titanic survival prediction models"
+  maintainer: "ML Team"
+
+# Define multiple classifiers
+classifiers:
+  # Classifier 1: CatBoost model
+  catboost-survival:
+    # Classifier metadata
+    metadata:
+      name: "catboost-survival"
+      version: "1.0.0"
+      description: "CatBoost-based Titanic survival predictor"
+      trained_at: "2024-01-15T10:30:00Z"
+      metrics:
+        accuracy: 0.8267
+        precision: 0.8125
+        recall: 0.6842
+        f1_score: 0.7429
+
+    # Predictor configuration
+    predictor:
+      module: examples.example_titanic_manual_multi_classifier_setup.predictor_catboost_v2
+      class_name: CatBoostSurvivalPredictor
+      init_kwargs:
+        model_path: "./artifacts/catboost-survival/model.pkl"
+        features_path: "./artifacts/catboost-survival/features.json"
+        categorical_indices_path: "./artifacts/catboost-survival/categorical_indices.json"
+
+    # API configuration
+    api:
+      version: "v1"  # For metadata tracking only
+      adapter: records
+      feature_order: [Pclass, Sex, Age, SibSp, Parch, Fare, Embarked, FamilySize, IsAlone, Title]
+      thread_safe_predict: false
+      max_concurrent_predictions: 1
+      endpoints:
+        predict: true
+        # Note: batch_predict removed - /predict handles both single and batch
+        predict_proba: true
+
+    # Build configuration
+    build:
+      dockerfile_template: |
+        FROM python:3.11-slim
+        WORKDIR /app
+        COPY requirements.txt .
+        RUN pip install --no-cache-dir -r requirements.txt
+        COPY . .
+        CMD ["ml_server", "serve", "--classifier", "catboost-survival"]
+
+  # Classifier 2: RandomForest model
+  randomforest-survival:
+    # Classifier metadata
+    metadata:
+      name: "randomforest-survival"
+      version: "1.0.0"
+      description: "RandomForest-based Titanic survival predictor"
+      trained_at: "2024-01-15T10:35:00Z"
+      metrics:
+        accuracy: 0.8045
+        precision: 0.7826
+        recall: 0.6579
+        f1_score: 0.7148
+
+    # Predictor configuration
+    predictor:
+      module: examples.example_titanic_manual_multi_classifier_setup.predictor_randomforest
+      class_name: RandomForestSurvivalPredictor
+      init_kwargs:
+        model_path: "./artifacts/randomforest-survival/model.pkl"
+        features_path: "./artifacts/randomforest-survival/features.json"
+        encoders_path: "./artifacts/randomforest-survival/label_encoders.pkl"
+        scaler_path: "./artifacts/randomforest-survival/scaler.pkl"
+
+    # API configuration
+    api:
+      version: "v1"  # For metadata tracking only
+      adapter: records
+      feature_order: [Pclass, Sex, Age, SibSp, Parch, Fare, Embarked, FamilySize, IsAlone, Title]
+      thread_safe_predict: false
+      max_concurrent_predictions: 1
+      endpoints:
+        predict: true
+        # Note: batch_predict removed - /predict handles both single and batch
+        predict_proba: true
+
+    # Build configuration
+    build:
+      dockerfile_template: |
+        FROM python:3.11-slim
+        WORKDIR /app
+        COPY requirements.txt .
+        RUN pip install --no-cache-dir -r requirements.txt
+        COPY . .
+        CMD ["ml_server", "serve", "--classifier", "randomforest-survival"]
+
+# Default classifier (when no --classifier flag is provided)
+default_classifier: "catboost-survival"
+
+# Deployment configuration
+deployment:
+  # Each classifier gets its own container tag
+  container_naming: "{repository}-{classifier}:{version}"
+
+  # Git tagging strategy for multi-classifier
+  git_tag_format: "{classifier}-v{version}"
+
+  # Enable parallel builds
+  parallel_builds: true
+
+  # Registry configuration
+  registry:
+    url: "my-registry.example.com:5000"
+    namespace: "ml-models"
+
+
+
+

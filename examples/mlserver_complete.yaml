@@ -1,0 +1,80 @@
+# Complete mlserver.yaml Example with All Available Parameters
+# =============================================================
+# This file demonstrates ALL configuration options available in MLServer.
+# Most parameters have sensible defaults - you only need to specify what differs.
+
+# Server Configuration
+server:
+  title: "ML Server"                    # API title in docs
+  host: "0.0.0.0"                       # Network interface
+  port: 8000                            # Port number (1-65535)
+  log_level: "INFO"                     # DEBUG|INFO|WARNING|ERROR
+  workers: 1                            # Number of processes (1 for K8s)
+
+  # CORS (optional, disabled by default for security)
+  cors:
+    allow_origins: []                   # Empty = CORS disabled
+    allow_methods: ["GET", "POST"]
+    allow_headers: ["Content-Type"]
+    allow_credentials: false
+
+# Predictor Configuration (REQUIRED)
+predictor:
+  module: "my_predictor"                # Python module name
+  class_name: "MyPredictor"             # Class to instantiate
+  init_kwargs:                          # Constructor arguments
+    model_path: "./models/model.pkl"
+    threshold: 0.5
+
+# API Configuration (REQUIRED)
+api:
+  version: "v1"                         # API version
+  endpoints:
+    predict: true
+    # Note: batch_predict removed - /predict handles both single and batch
+    predict_proba: true
+
+  # Input/Output
+  adapter: "records"                    # records|ndarray|auto
+  feature_order: null                   # Enforce feature order
+
+  # Response Format (NEW)
+  response_format: "standard"           # standard|custom|passthrough
+  response_validation: true
+  extract_values: false
+
+  # Concurrency
+  thread_safe_predict: false
+  max_concurrent_predictions: 1
+
+# Observability
+observability:
+  metrics: true
+  metrics_endpoint: "/metrics"
+  structured_logging: true
+  log_payloads: false                   # Privacy consideration
+  correlation_ids: true
+
+# Classifier Metadata (REQUIRED)
+classifier:
+  name: "my-classifier"                 # URL-safe name
+  version: "1.0.0"                      # Semantic version
+  repository: "my-ml-repo"              # Repository name
+  description: "Example classifier"
+
+# Model Metadata (OPTIONAL)
+model:
+  version: "1.0.0"
+  trained_at: "2025-01-17T10:30:00Z"
+  metrics:
+    accuracy: 0.95
+    precision: 0.93
+    recall: 0.91
+
+# Build Configuration (OPTIONAL)
+build:
+  base_image: "python:3.9-slim"
+  registry: "docker.io/myorg"
+  tag_prefix: "ml-models"
+  include_files: ["models/", "*.py"]
+  exclude_patterns: ["*.pyc", "tests/"]

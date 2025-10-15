@@ -1,0 +1,31 @@
+# Test configuration for concurrency control validation
+server:
+  title: "Test Concurrency Server"
+  host: 0.0.0.0
+  port: 8000
+  log_level: INFO
+  workers: 1
+
+predictor:
+  module: tests.fixtures.test_predictor
+  class_name: TestPredictor
+  init_kwargs: {}
+
+observability:
+  metrics: true
+  structured_logging: false  # Disable for cleaner test output
+
+classifier:
+  name: "test-classifier"
+  version: "1.0.0"
+  description: "Test classifier for concurrency validation"
+
+api:
+  version: "v1"
+  adapter: records
+  thread_safe_predict: false
+  max_concurrent_predictions: 1  # Enforce single prediction
+  endpoints:
+    predict: true
+    batch_predict: true
+    predict_proba: false

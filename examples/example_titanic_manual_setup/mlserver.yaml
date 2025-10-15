@@ -1,0 +1,70 @@
+# Unified MLServer Configuration
+# This file replaces the previous classifier.yaml and config.yaml files
+# and demonstrates the new unified configuration format.
+
+# Server configuration
+server:
+  title: "Titanic Survival Predictor API"
+  host: 0.0.0.0
+  port: 8000
+  log_level: INFO
+  workers: 1  # Number of processes (not threads) - each loads separate model copy
+  cors:
+    allow_origins: ["*"]
+
+# Predictor configuration
+predictor:
+  module: examples.example_titanic_manual_setup.predictor_catboost
+  class_name: CatBoostPredictor
+  init_kwargs:
+    model_path: "./artifacts/catboost_model.pkl"
+    preprocessor_path: "./artifacts/preprocessor.pkl"
+    feature_order: [pclass, sex, age, sibsp, parch, fare, embarked, who, adult_male, alone]
+    # Alternatively: feature_order_path: "./artifacts/feature_order.json"
+
+
+# Observability configuration
+observability:
+  metrics: true               # Enable Prometheus metrics collection
+  metrics_endpoint: "/metrics" # Metrics endpoint path
+  structured_logging: true    # Enable structured JSON logging
+  log_payloads: false         # Log request/response payloads (disable for privacy)
+  correlation_ids: true       # Generate correlation IDs for request tracing
+
+# Classifier metadata (for versioning and containerization)
+classifier:
+  repository: "fastapi-mlserver-wrapper"  # Auto-detected from git remote or directory name
+  name: "titanic-survival-predictor"
+  version: "1.0.0"
+  description: "Titanic survival prediction model using CatBoost"
+
+# Model metadata
+model:
+  version: "1.0.0"
+  trained_at: "2024-01-15T10:30:00Z"
+  metrics:
+    accuracy: 0.8156
+    precision: 0.7941
+    recall: 0.6757
+    f1_score: 0.7299
+
+# API versioning
+api:
+  version: "v1"                  # For metadata tracking only (not in URL)
+  adapter: records              # records | ndarray | auto
+  feature_order: [pclass, sex, age, sibsp, parch, fare, embarked, who, adult_male, alone]
+  thread_safe_predict: false
+  endpoints:
+    predict: true
+    # Note: batch_predict removed - /predict handles both single and batch
+    predict_proba: true
+
+# Build configuration (for containerization)
+build:
+  base_image: "python:3.11-slim"
+  requirements:
+    - "catboost>=1.2"
+    - "scikit-learn>=1.7.2"
+    - "pandas>=2.0"
+  registry: "my-company-nexus.com:5000"
+  tag_prefix: "ml-models"

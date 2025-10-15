@@ -1,0 +1,99 @@
+# Multi-Classifier Configuration with Simplified Module Paths
+# Uses automatic module resolution - only needs filename, not full path
+
+server:
+  title: "Titanic Survival Prediction Service"
+  host: 0.0.0.0
+  port: 8000
+  log_level: INFO
+  workers: 1
+  cors:
+    allow_origins: ["*"]
+
+observability:
+  metrics: true
+  metrics_endpoint: "/metrics"
+  structured_logging: true
+  log_payloads: false
+  correlation_ids: true
+
+repository:
+  name: "titanic-multi-classifier"
+  description: "Multiple Titanic survival prediction models"
+  maintainer: "ML Team"
+
+classifiers:
+  # CatBoost classifier - using just the filename!
+  catboost-survival:
+    metadata:
+      name: "catboost-survival"
+      version: "1.0.0"
+      description: "CatBoost-based Titanic survival predictor"
+      trained_at: "2024-01-15T10:30:00Z"
+      metrics:
+        accuracy: 0.8267
+        precision: 0.8125
+        recall: 0.6842
+        f1_score: 0.7429
+
+    predictor:
+      module: predictor_catboost  # Just the filename!
+      class_name: CatBoostPredictor
+      init_kwargs:
+        model_path: "./artifacts/catboost_model.pkl"
+        preprocessor_path: "./artifacts/preprocessor.pkl"
+        feature_order: [pclass, sex, age, sibsp, parch, fare, embarked, who, adult_male, alone]
+
+    api:
+      version: "v1"
+      adapter: records
+      feature_order: [Pclass, Sex, Age, SibSp, Parch, Fare, Embarked, FamilySize, IsAlone, Title]
+      thread_safe_predict: false
+      max_concurrent_predictions: 1
+      endpoints:
+        predict: true
+        # Note: batch_predict removed - /predict handles both single and batch
+        predict_proba: true
+
+  # RandomForest classifier - also using just the filename!
+  randomforest-survival:
+    metadata:
+      name: "randomforest-survival"
+      version: "1.0.0"
+      description: "RandomForest-based Titanic survival predictor"
+      trained_at: "2024-01-15T10:35:00Z"
+      metrics:
+        accuracy: 0.8045
+        precision: 0.7826
+        recall: 0.6579
+        f1_score: 0.7148
+
+    predictor:
+      module: predictor_randomforest  # Just the filename!
+      class_name: RandomForestSurvivalPredictor
+      init_kwargs:
+        model_path: "./artifacts/randomforest-survival/model.pkl"
+        features_path: "./artifacts/randomforest-survival/features.json"
+        encoders_path: "./artifacts/randomforest-survival/label_encoders.pkl"
+        scaler_path: "./artifacts/randomforest-survival/scaler.pkl"
+
+    api:
+      version: "v1"
+      adapter: records
+      feature_order: [Pclass, Sex, Age, SibSp, Parch, Fare, Embarked, FamilySize, IsAlone, Title]
+      thread_safe_predict: false
+      max_concurrent_predictions: 1
+      endpoints:
+        predict: true
+        # Note: batch_predict removed - /predict handles both single and batch
+        predict_proba: true
+
+default_classifier: "catboost-survival"
+
+deployment:
+  container_naming: "{repository}-{classifier}:{version}"
+  git_tag_format: "{classifier}-v{version}"
+  parallel_builds: true
+  registry:
+    url: "my-registry.example.com:5000"
+    namespace: "ml-models"
