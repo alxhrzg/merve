@@ -27,6 +27,120 @@ class ContainerError(Exception):
     pass
 
 
+def _get_mlserver_git_url() -> Optional[str]:
+    """
+    Detect if mlserver-fastapi-wrapper is installed from git and return the install URL.
+
+    Checks the following in order:
+    1. MLSERVER_GIT_URL environment variable (allows manual override)
+    2. direct_url.json from pip installation metadata
+    3. Editable install source directory
+    4. Current package location if it's a git repo
+
+    Returns:
+        Git URL in pip-installable format (e.g., 'git+https://github.com/user/repo.git@branch')
+        or None if not installed from git
+    """
+    try:
+        import subprocess
+
+        # Strategy 0: Check environment variable override
+        env_git_url = os.environ.get('MLSERVER_GIT_URL')
+        if env_git_url:
+            print(f"Using MLSERVER_GIT_URL from environment: {env_git_url}")
+            return env_git_url
+
+        try:
+            from importlib.metadata import distribution
+        except ImportError:
+            # Python < 3.8
+            from importlib_metadata import distribution
+
+        # Get the package distribution
+        try:
+            dist = distribution('mlserver-fastapi-wrapper')
+        except Exception:
+            return None
+
+        # Try multiple strategies to find the source directory
+        source_dir = None
+
+        # Strategy 1: Check if it's installed via pip from git (check direct_url.json)
+        try:
+            direct_url_file = Path(dist._path) / 'direct_url.json'
+            if direct_url_file.exists():
+                import json
+                with open(direct_url_file, 'r') as f:
+                    direct_url_data = json.load(f)
+                    if 'url' in direct_url_data and 'git+' in direct_url_data['url']:
+                        # This is a git installation, return the URL directly
+                        return direct_url_data['url']
+                    elif 'vcs_info' in direct_url_data:
+                        vcs = direct_url_data['vcs_info']
+                        if 'vcs' in vcs and vcs['vcs'] == 'git':
+                            url = direct_url_data.get('url', '')
+                            commit = vcs.get('commit_id', vcs.get('requested_revision', 'main'))
+                            if url:
+                                return f"git+{url}@{commit}"
+        except Exception:
+            pass
+
+        # Strategy 2: Check location for editable installs
+        try:
+            location = str(dist._path.parent.parent)  # Get site-packages parent
+            if '/src/' in location:
+                # Editable install - find the git directory
+                parts = location.split('/src/')
+                if len(parts) > 1:
+                    base_path = parts[0] + '/src/mlserver-fastapi-wrapper'
+                    if Path(base_path).exists():
+                        source_dir = base_path
+        except Exception:
+            pass
+
+        # Strategy 3: Check if we're running from the git repo itself
+        if not source_dir:
+            source_path = Path(__file__).parent.parent
+            if (source_path / '.git').exists():
+                source_dir = str(source_path)
+
+        # If we found a source directory with git, extract the URL
+        if source_dir:
+            git_config = Path(source_dir) / '.git' / 'config'
+            if git_config.exists():
+                # Parse git config for remote URL
+                with open(git_config, 'r') as f:
+                    lines = f.readlines()
+                    for i, line in enumerate(lines):
+                        if 'url = ' in line:
+                            url = line.split('url = ')[1].strip()
+
+                            # Get current branch/commit
+                            try:
+                                result = subprocess.run(
+                                    ['git', 'rev-parse', '--abbrev-ref', 'HEAD'],
+                                    cwd=source_dir,
+                                    capture_output=True,
+                                    text=True
+                                )
+                                if result.returncode == 0:
+                                    branch = result.stdout.strip()
+                                    # Return in pip-installable format
+                                    return f"git+{url}@{branch}"
+                            except Exception:
+                                # Fallback to main branch
+                                return f"git+{url}@main"
+
+                            return f"git+{url}@main"
+
+        return None
+
+    except Exception as e:
+        # If detection fails, return None and fall back to other methods
+        print(f"Note: Could not detect git installation source: {e}")
+        return None
+
+
 def _find_mlserver_source() -> Optional[str]:
     """Find mlserver source directory with multiple detection strategies."""
     # Strategy 1: Check environment variable
@@ -417,7 +531,13 @@ def generate_dockerfile(project_path: str, config: AppConfig,
         wheel_install_section = f"""COPY mlserver_fastapi_wrapper*.whl {temp_dir}/
 RUN pip install --no-cache-dir {temp_dir}/mlserver_fastapi_wrapper*.whl && rm {temp_dir}/mlserver_fastapi_wrapper*.whl"""
     else:
-        wheel_install_section = """# No local wheel found, installing from PyPI
+        # Try to detect if installed from git
+        git_url = _get_mlserver_git_url()
+        if git_url:
+            wheel_install_section = f"""# Installing from git repository (detected from current installation)
+RUN pip install --no-cache-dir "{git_url}"#egg=mlserver-fastapi-wrapper"""
+        else:
+            wheel_install_section = """# No local wheel found, installing from PyPI
 RUN pip install --no-cache-dir mlserver-fastapi-wrapper"""
 
     # Get classifier info for labels
