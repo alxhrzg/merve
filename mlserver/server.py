@@ -621,41 +621,186 @@ def create_app(config: AppConfig, config_file_name: str = None) -> FastAPI:
 # Helpers
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _to_jsonable(x):
+def _to_jsonable(x, _depth=0):
     """Convert any Python object to JSON-serializable format.
 
-    Handles numpy arrays, pandas objects, and nested data structures.
-    """
-    # Handle numpy types
-    try:
-        import numpy as np
-        if isinstance(x, np.ndarray):
-            return x.tolist()
-        if isinstance(x, np.generic):
-            return x.item()
-    except ImportError:
-        pass
+    Handles pandas, numpy, datetime types, and nested structures with comprehensive
+    type coverage to prevent serialization errors in production.
 
-    # Handle pandas types
+    Args:
+        x: Object to convert
+        _depth: Current recursion depth (internal use)
+
+    Returns:
+        JSON-serializable representation of x
+
+    Raises:
+        RecursionError: If recursion depth exceeds maximum limit
+    """
+    # Maximum recursion depth to prevent stack overflow
+    _MAX_RECURSION_DEPTH = 50
+
+    # Recursion depth check
+    if _depth > _MAX_RECURSION_DEPTH:
+        logger.warning(f"Max recursion depth {_MAX_RECURSION_DEPTH} exceeded in _to_jsonable")
+        raise RecursionError(f"Maximum recursion depth exceeded: {_MAX_RECURSION_DEPTH}")
+
+    # Fast path: None
+    if x is None:
+        return None
+
+    # Fast path: Basic JSON-serializable types
+    if isinstance(x, (str, int, float, bool)):
+        return x
+
+    # === Pandas temporal types (MUST be before numpy!) ===
     try:
         import pandas as pd
-        if isinstance(x, pd.DataFrame):
-            return x.to_dict('records')
-        if isinstance(x, pd.Series):
-            return x.tolist()
+
+        # pd.Timestamp - Convert to ISO 8601 string
+        if isinstance(x, pd.Timestamp):
+            return x.isoformat()
+
+        # pd.NaT - Not a Time (pandas null for timestamps)
+        # Check type name first to avoid calling pd.isna() on arrays
+        if hasattr(x, '__class__') and x.__class__.__name__ == 'NaTType':
+            return None
+
+        # pd.Timedelta - Convert to seconds
+        if isinstance(x, pd.Timedelta):
+            return x.total_seconds()
+
     except ImportError:
         pass
 
-    # Recursively handle dictionaries
+    # === Pandas collection types ===
+    try:
+        import pandas as pd
+
+        # DataFrame - Convert to list of records
+        if isinstance(x, pd.DataFrame):
+            # Recursively convert to handle nested types
+            records = x.to_dict('records')
+            return _to_jsonable(records, _depth + 1)
+
+        # Series - Convert to list
+        if isinstance(x, pd.Series):
+            # Recursively convert to handle nested types
+            return _to_jsonable(x.tolist(), _depth + 1)
+
+        # Index - Convert to list
+        if isinstance(x, pd.Index):
+            return _to_jsonable(x.tolist(), _depth + 1)
+
+    except ImportError:
+        pass
+
+    # === Python datetime types ===
+    try:
+        from datetime import datetime, date, time, timedelta
+
+        # datetime.datetime - ISO 8601 with timezone
+        if isinstance(x, datetime):
+            return x.isoformat()
+
+        # datetime.date - YYYY-MM-DD
+        if isinstance(x, date):
+            return x.isoformat()
+
+        # datetime.time - HH:MM:SS
+        if isinstance(x, time):
+            return x.isoformat()
+
+        # datetime.timedelta - Total seconds
+        if isinstance(x, timedelta):
+            return x.total_seconds()
+
+    except ImportError:
+        pass
+
+    # === NumPy types ===
+    try:
+        import numpy as np
+
+        # np.datetime64 - MUST check before np.generic!
+        if isinstance(x, np.datetime64):
+            # Convert to ISO string via pandas for consistency
+            import pandas as pd
+            return pd.Timestamp(x).isoformat()
+
+        # np.timedelta64 - Convert to seconds
+        if isinstance(x, np.timedelta64):
+            # Convert to pandas Timedelta for consistent handling
+            import pandas as pd
+            return pd.Timedelta(x).total_seconds()
+
+        # np.ndarray - Convert to nested list
+        if isinstance(x, np.ndarray):
+            # Recursively convert to handle nested types
+            return _to_jsonable(x.tolist(), _depth + 1)
+
+        # np.generic - Catches all numpy scalar types (int64, float64, bool_, etc.)
+        if isinstance(x, np.generic):
+            return x.item()
+
+    except ImportError:
+        pass
+
+    # === Python collection types (recursive) ===
+
+    # Dictionary - Recursively convert keys and values
     if isinstance(x, dict):
-        return {k: _to_jsonable(v) for k, v in x.items()}
+        return {
+            _to_jsonable(k, _depth + 1): _to_jsonable(v, _depth + 1)
+            for k, v in x.items()
+        }
 
-    # Recursively handle lists and tuples
+    # List/tuple - Recursively convert items
     if isinstance(x, (list, tuple)):
-        return [_to_jsonable(item) for item in x]
+        return [_to_jsonable(item, _depth + 1) for item in x]
 
-    # Return as-is for basic types (str, int, float, bool, None)
-    return x
+    # Set/frozenset - Convert to sorted list
+    if isinstance(x, (set, frozenset)):
+        try:
+            return sorted(_to_jsonable(list(x), _depth + 1))
+        except TypeError:
+            # If items aren't sortable, return unsorted
+            return _to_jsonable(list(x), _depth + 1)
+
+    # === Other common types ===
+
+    # decimal.Decimal - Convert to float
+    try:
+        from decimal import Decimal
+        if isinstance(x, Decimal):
+            return float(x)
+    except ImportError:
+        pass
+
+    # bytes - Convert to base64 string
+    if isinstance(x, bytes):
+        import base64
+        return base64.b64encode(x).decode('ascii')
+
+    # === Fallback ===
+    # If we reach here, the type isn't explicitly handled
+    # Log a warning and attempt str conversion
+    type_name = type(x).__name__
+    logger.warning(
+        f"Unhandled type in _to_jsonable: {type_name}. "
+        f"Attempting str() conversion. Value: {str(x)[:100]}"
+    )
+
+    try:
+        # Attempt to convert to string as last resort
+        return str(x)
+    except Exception as e:
+        # If even str() fails, log error and return placeholder
+        logger.error(
+            f"Failed to convert {type_name} to JSON-serializable format: {e}. "
+            f"Returning placeholder string."
+        )
+        return f"<Unserializable: {type_name}>"
 
 
 def _tolist2d(arr):
