@@ -482,8 +482,21 @@ Dockerfile
 
 def generate_dockerfile(project_path: str, config: AppConfig,
                        required_files: List[str], base_image: str = None,
-                       has_wheel: bool = False) -> str:
-    """Generate Dockerfile content for the classifier project with intelligent file copying."""
+                       has_wheel: bool = False, needs_git: bool = False) -> str:
+    """
+    Generate Dockerfile content for the classifier project with intelligent file copying.
+
+    Args:
+        project_path: Path to the project
+        config: AppConfig instance
+        required_files: List of files to copy
+        base_image: Base Docker image (optional)
+        has_wheel: Whether a wheel file is available
+        needs_git: Whether git needs to be installed in the container
+
+    Returns:
+        Dockerfile content as string
+    """
 
     # Use default base image if not provided
     if base_image is None:
@@ -525,6 +538,13 @@ def generate_dockerfile(project_path: str, config: AppConfig,
 
     copy_section = "\n".join(copy_commands) if copy_commands else "COPY . ."
 
+    # Determine system dependencies based on installation method
+    base_system_deps = ["gcc", "g++", "curl"]
+    if needs_git:
+        base_system_deps.insert(0, "git")  # Add git at the beginning if needed
+
+    system_deps_line = " \\\n    ".join(base_system_deps)
+
     # Generate wheel installation section
     if has_wheel:
         temp_dir = get_settings().container.temp_dir
@@ -533,8 +553,13 @@ RUN pip install --no-cache-dir {temp_dir}/mlserver_fastapi_wrapper*.whl && rm {t
     else:
         # Try to detect if installed from git
         git_url = _get_mlserver_git_url()
-        if git_url:
+        if git_url and needs_git:
             wheel_install_section = f"""# Installing from git repository (detected from current installation)
+# Git is installed in system dependencies to support pip git clone
+RUN pip install --no-cache-dir "{git_url}"#egg=mlserver-fastapi-wrapper"""
+        elif git_url:
+            wheel_install_section = f"""# Installing from git repository (detected from current installation)
+# Note: This should not happen - wheel should have been built
 RUN pip install --no-cache-dir "{git_url}"#egg=mlserver-fastapi-wrapper"""
         else:
             wheel_install_section = """# No local wheel found, installing from PyPI
@@ -583,9 +608,7 @@ WORKDIR /app
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y \\
-    gcc \\
-    g++ \\
-    curl \\
+    {system_deps_line} \\
     && rm -rf /var/lib/apt/lists/*
 
 # Install mlserver-fastapi-wrapper
@@ -673,24 +696,97 @@ def _load_container_config(project_path: str, config_file: Optional[str] = None,
         return AppConfig.model_validate(raw_config)
 
 
-def _handle_wheel_preparation(project_path: str, mlserver_source_path: Optional[str] = None) -> Optional[str]:
-    """Check for existing wheels or build one if needed."""
+def _find_git_source_directory() -> Optional[str]:
+    """
+    Find the local git source directory for mlserver-fastapi-wrapper.
+
+    Returns:
+        Path to the git source directory, or None if not found
+    """
+    try:
+        try:
+            from importlib.metadata import distribution
+        except ImportError:
+            from importlib_metadata import distribution
+
+        dist = distribution('mlserver-fastapi-wrapper')
+
+        # Check for editable install location
+        location = str(dist._path.parent.parent)
+        if '/src/' in location:
+            parts = location.split('/src/')
+            if len(parts) > 1:
+                base_path = parts[0] + '/src/mlserver-fastapi-wrapper'
+                if Path(base_path).exists() and (Path(base_path) / '.git').exists():
+                    return base_path
+
+        # Check if current package is from git repo
+        source_path = Path(__file__).parent.parent
+        if (source_path / '.git').exists():
+            return str(source_path)
+
+    except Exception:
+        pass
+
+    return None
+
+
+def _handle_wheel_preparation(project_path: str, mlserver_source_path: Optional[str] = None,
+                              git_url: Optional[str] = None) -> Tuple[Optional[str], bool]:
+    """
+    Check for existing wheels or build one if needed.
+
+    Args:
+        project_path: Path to the project
+        mlserver_source_path: Explicit source path (optional)
+        git_url: Git URL if detected (optional)
+
+    Returns:
+        Tuple of (wheel_filename, needs_git_in_dockerfile)
+        - wheel_filename: Name of wheel file if created, None otherwise
+        - needs_git_in_dockerfile: True if git needs to be installed in Dockerfile
+    """
     existing_wheels = list(Path(project_path).glob("mlserver_fastapi_wrapper-*.whl"))
 
     if existing_wheels:
-        return None
+        print("✓ Found existing mlserver wheel, will use it")
+        return None, False
 
-    # No wheel present, try to build one
+    # If we have a git URL, try to build a wheel from the local source
+    if git_url:
+        print("🔍 Git-based installation detected, attempting to build wheel from source...")
+
+        # Try to find the git source directory
+        git_source = _find_git_source_directory()
+
+        if git_source:
+            print(f"✓ Found git source at: {git_source}")
+            wheel_file = _build_mlserver_wheel(git_source, project_path)
+            if wheel_file:
+                print(f"✓ Successfully built wheel from git source: {wheel_file}")
+                return wheel_file, False
+            else:
+                print("⚠️  Failed to build wheel from git source")
+        else:
+            print("⚠️  Could not find local git source directory")
+
+        # Couldn't build wheel from git source, will need git in Dockerfile
+        print("→ Will install git in Docker container for pip installation")
+        return None, True
+
+    # No wheel present and no git URL, try to build one from traditional source
     if mlserver_source_path:
-        return _build_mlserver_wheel(mlserver_source_path, project_path)
+        wheel_file = _build_mlserver_wheel(mlserver_source_path, project_path)
+        return wheel_file, False
 
     # Try to find source automatically
     found_source = _find_mlserver_source()
     if found_source:
-        return _build_mlserver_wheel(found_source, project_path)
+        wheel_file = _build_mlserver_wheel(found_source, project_path)
+        return wheel_file, False
 
-    print("Warning: No mlserver wheel found and source not available. Using PyPI installation.")
-    return None
+    print("ℹ️  No mlserver wheel found and source not available. Will use PyPI installation.")
+    return None, False
 
 
 def _prepare_container_metadata(config: 'AppConfig', project_path: str) -> 'ClassifierMetadata':
@@ -798,7 +894,7 @@ def _prepare_docker_build_command(final_tags: List[str], build_args: Optional[Di
 
 
 def _write_docker_files(project_path: str, config: 'AppConfig', required_files: List[str],
-                       analysis: Dict[str, Any], has_wheel: bool,
+                       analysis: Dict[str, Any], has_wheel: bool, needs_git: bool,
                        classifier_name: Optional[str] = None) -> Tuple[Path, Path]:
     """Generate and write Dockerfile and .dockerignore files.
 
@@ -808,6 +904,7 @@ def _write_docker_files(project_path: str, config: 'AppConfig', required_files: 
         required_files: List of files to copy to container
         analysis: File analysis results
         has_wheel: Whether a wheel is available
+        needs_git: Whether git needs to be installed in container
         classifier_name: Name of specific classifier (for multi-classifier configs)
     """
     # Get base image from config
@@ -857,7 +954,7 @@ def _write_docker_files(project_path: str, config: 'AppConfig', required_files: 
             required_files.append(f".mlserver.{classifier_name}.yaml")
 
     # Generate Dockerfile
-    dockerfile_content = generate_dockerfile(project_path, config, required_files, base_image, has_wheel)
+    dockerfile_content = generate_dockerfile(project_path, config, required_files, base_image, has_wheel, needs_git)
 
     # If we created a temp config, update Dockerfile to rename it to mlserver.yaml
     if temp_config_file:
@@ -941,8 +1038,11 @@ def build_container(
         # Load configuration
         config = _load_container_config(project_path, config_file, classifier_name)
 
-        # Handle wheel preparation
-        wheel_file = _handle_wheel_preparation(project_path, mlserver_source_path)
+        # Detect if installed from git
+        git_url = _get_mlserver_git_url()
+
+        # Handle wheel preparation with git URL awareness
+        wheel_file, needs_git = _handle_wheel_preparation(project_path, mlserver_source_path, git_url)
         existing_wheels = list(Path(project_path).glob("mlserver_fastapi_wrapper-*.whl"))
         has_wheel = bool(existing_wheels) or wheel_file is not None
 
@@ -959,7 +1059,7 @@ def build_container(
 
         # Write Docker files (Dockerfile and .dockerignore)
         dockerfile_path, dockerignore_path, temp_config_file = _write_docker_files(
-            project_path, config, required_files, analysis, has_wheel, classifier_name
+            project_path, config, required_files, analysis, has_wheel, needs_git, classifier_name
         )
 
         # Prepare container metadata and tags
