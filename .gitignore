@@ -78,8 +78,9 @@ coverage.xml
 # Auto-generated version file (created by setuptools-scm)
 mlserver/_version.py
 
-# Root-level documentation files (except CLAUDE.md)
+# Root-level documentation files (except CLAUDE.md and README.md)
 /*.md
 !CLAUDE.md
+!README.md
 
 
