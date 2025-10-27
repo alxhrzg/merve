@@ -69,6 +69,8 @@ Thumbs.db
 .pytest_cache/
 htmlcov/
 .coverage.*
+coverage.json
+coverage.xml
 
 # Jupyter
 .ipynb_checkpoints
