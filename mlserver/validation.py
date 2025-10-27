@@ -237,37 +237,74 @@ class ConfigurationValidValidator(Validator):
 
 
 class GitHubActionsConfiguredValidator(Validator):
-    """Validates that GitHub Actions workflow is configured."""
+    """Validates that GitHub Actions workflow is configured and compatible."""
 
-    def __init__(self):
+    def __init__(self, check_compatibility: bool = True, strict: bool = False):
+        """
+        Initialize validator.
+
+        Args:
+            check_compatibility: If True, validate workflow version compatibility
+            strict: If True, fail on version mismatch. If False, only warn.
+        """
         super().__init__(
             name="github_actions_configured",
-            description="Verify GitHub Actions workflow exists"
+            description="Verify GitHub Actions workflow exists and is compatible"
         )
+        self.check_compatibility = check_compatibility
+        self.strict = strict
 
     def validate(self, project_path: str = ".", **kwargs) -> ValidationResult:
         """
-        Check if GitHub Actions workflow file exists.
+        Check if GitHub Actions workflow file exists and is compatible.
 
         Args:
             project_path: Path to project
 
         Returns:
-            ValidationResult indicating if workflow exists
+            ValidationResult indicating if workflow exists and is compatible
         """
-        from .github_actions import check_github_actions_setup
+        from .github_actions import check_github_actions_setup, validate_workflow_compatibility
 
-        if check_github_actions_setup(project_path):
-            return ValidationResult(passed=True)
+        if not check_github_actions_setup(project_path):
+            # Workflow doesn't exist - this is a warning, not an error
+            return ValidationResult(
+                passed=True,  # Don't fail validation
+                warnings=["GitHub Actions workflow not configured"],
+                details={
+                    "solution": "Run 'mlserver init-github' to add CI/CD automation"
+                }
+            )
 
-        # This is a warning, not an error - workflow is optional
-        return ValidationResult(
-            passed=True,  # Don't fail validation
-            warnings=["GitHub Actions workflow not configured"],
-            details={
-                "solution": "Run 'mlserver init-github' to add CI/CD automation"
-            }
-        )
+        # Workflow exists - check compatibility if requested
+        if self.check_compatibility:
+            is_valid, warning, details = validate_workflow_compatibility(project_path, self.strict)
+
+            if not is_valid:
+                if self.strict:
+                    # Strict mode - fail validation
+                    return ValidationResult(
+                        passed=False,
+                        error_message="GitHub Actions workflow is incompatible with current MLServer version",
+                        details=details
+                    )
+                else:
+                    # Lenient mode - pass but warn
+                    return ValidationResult(
+                        passed=True,
+                        warnings=[warning] if warning else [],
+                        details=details
+                    )
+            elif warning:
+                # Valid but with warnings
+                return ValidationResult(
+                    passed=True,
+                    warnings=[warning],
+                    details=details
+                )
+
+        # All good
+        return ValidationResult(passed=True)
 
 
 class ValidationSuite:
@@ -326,6 +363,7 @@ def get_tag_validation_suite() -> ValidationSuite:
             ProjectInitializedValidator(),
             ConfigurationValidValidator(),
             GitWorkingDirectoryCleanValidator(),
+            GitHubActionsConfiguredValidator(check_compatibility=True, strict=False),
         ]
     )
 
@@ -360,6 +398,6 @@ def get_deploy_validation_suite() -> ValidationSuite:
             ProjectInitializedValidator(),
             ConfigurationValidValidator(),
             GitWorkingDirectoryCleanValidator(),
-            GitHubActionsConfiguredValidator(),
+            GitHubActionsConfiguredValidator(check_compatibility=True, strict=True),
         ]
     )
