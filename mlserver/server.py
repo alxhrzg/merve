@@ -826,10 +826,7 @@ def app() -> FastAPI:
     # Try to find config file
     config_paths = [
         os.environ.get('MLSERVER_CONFIG_PATH'),
-        'mlserver.yaml',
-        'config.yaml',
-        'mlserver_multi_classifier.yaml',
-        'mlserver_single_classifier.yaml'
+        'mlserver.yaml'
     ]
 
     config_file = None

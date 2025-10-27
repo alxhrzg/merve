@@ -147,39 +147,33 @@ def get_repository_name(project_path: str = ".") -> str:
 
 
 def load_classifier_metadata(project_path: str) -> ClassifierMetadata:
-    """Load classifier metadata from mlserver.yaml or classifier.yaml file."""
-    # Try mlserver.yaml first (unified config)
+    """Load classifier metadata from mlserver.yaml file."""
     mlserver_file = Path(project_path) / "mlserver.yaml"
-    if mlserver_file.exists():
-        with open(mlserver_file, 'r') as f:
-            full_config = yaml.safe_load(f)
-            # Extract classifier metadata from unified config
-            if 'classifier' in full_config:
-                # mlserver.yaml has the metadata under 'classifier' key
-                metadata_dict = {
-                    'classifier': full_config.get('classifier', {}),
-                    'model': full_config.get('model', {}),
-                    'api': full_config.get('api', {}),
-                    'build': full_config.get('build', {})
-                }
-                return ClassifierMetadata.model_validate(metadata_dict)
 
-    # Fall back to classifier.yaml for backward compatibility
-    classifier_file = Path(project_path) / "classifier.yaml"
-    if classifier_file.exists():
-        with open(classifier_file, 'r') as f:
-            data = yaml.safe_load(f)
-        return ClassifierMetadata.model_validate(data)
+    if not mlserver_file.exists():
+        raise FileNotFoundError(f"mlserver.yaml not found in {project_path}")
 
-    # If neither exists, raise error
-    raise FileNotFoundError(f"Neither mlserver.yaml nor classifier.yaml found in {project_path}")
+    with open(mlserver_file, 'r') as f:
+        full_config = yaml.safe_load(f)
+
+    # Extract classifier metadata from unified config
+    if 'classifier' not in full_config:
+        raise ValueError(f"mlserver.yaml in {project_path} missing required 'classifier' section")
+
+    metadata_dict = {
+        'classifier': full_config.get('classifier', {}),
+        'model': full_config.get('model', {}),
+        'api': full_config.get('api', {}),
+        'build': full_config.get('build', {})
+    }
+    return ClassifierMetadata.model_validate(metadata_dict)
 
 
 def save_classifier_metadata(metadata: ClassifierMetadata, project_path: str):
-    """Save classifier metadata to classifier.yaml file."""
-    classifier_file = Path(project_path) / "classifier.yaml"
+    """Save classifier metadata to mlserver.yaml file."""
+    mlserver_file = Path(project_path) / "mlserver.yaml"
 
-    with open(classifier_file, 'w') as f:
+    with open(mlserver_file, 'w') as f:
         yaml.dump(metadata.model_dump(exclude_unset=True), f, default_flow_style=False, sort_keys=False)
 
 
@@ -253,38 +247,30 @@ def validate_version_consistency(metadata: ClassifierMetadata, project_path: str
 def get_version_info(project_path: str = ".") -> Dict[str, Any]:
     """Get comprehensive version information for a classifier project."""
     try:
-        # Try to load from unified config first
-        metadata = None
-        config_source = None
-
-        # Check for unified config (mlserver.yaml)
         mlserver_config_path = os.path.join(project_path, "mlserver.yaml")
-        if os.path.exists(mlserver_config_path):
-            try:
-                from .config import AppConfig
-                import yaml
 
-                with open(mlserver_config_path, 'r') as f:
-                    raw_config = yaml.safe_load(f)
+        if not os.path.exists(mlserver_config_path):
+            return {"error": f"mlserver.yaml not found in {project_path}"}
 
-                config = AppConfig.model_validate(raw_config)
-                if config.classifier:
-                    if isinstance(config.classifier, dict):
-                        metadata = ClassifierMetadata.model_validate({
-                            "classifier": config.classifier,
-                            "model": config.model or {},
-                            "api": config.api.model_dump() if config.api else {}
-                        })
-                    else:
-                        metadata = config.classifier
-                    config_source = "mlserver.yaml"
-            except Exception:
-                pass
+        from .config import AppConfig
+        import yaml
 
-        # Fall back to classifier.yaml
-        if metadata is None:
-            metadata = load_classifier_metadata(project_path)
-            config_source = "classifier.yaml"
+        with open(mlserver_config_path, 'r') as f:
+            raw_config = yaml.safe_load(f)
+
+        config = AppConfig.model_validate(raw_config)
+
+        if not config.classifier:
+            return {"error": "mlserver.yaml missing required 'classifier' section"}
+
+        if isinstance(config.classifier, dict):
+            metadata = ClassifierMetadata.model_validate({
+                "classifier": config.classifier,
+                "model": config.model or {},
+                "api": config.api.model_dump() if config.api else {}
+            })
+        else:
+            metadata = config.classifier
 
         git_info = get_git_info(project_path)
         issues = validate_version_consistency(metadata, project_path)
@@ -297,7 +283,7 @@ def get_version_info(project_path: str = ".") -> Dict[str, Any]:
             "container_tags": generate_container_tags(metadata, git_info),
             "validation_issues": issues,
             "timestamp": datetime.now().isoformat(),
-            "config_source": config_source
+            "config_source": "mlserver.yaml"
         }
 
     except FileNotFoundError as e:

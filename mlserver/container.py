@@ -466,7 +466,7 @@ def detect_required_files(project_path: str, config: AppConfig) -> Dict[str, Any
     scan_config_for_paths(config, analysis["artifact_files"])
 
     # 3. Add configuration files
-    config_files = ["mlserver.yaml", "config.yaml", "classifier.yaml", "requirements.txt"]
+    config_files = ["mlserver.yaml", "requirements.txt"]
     for config_file in config_files:
         if os.path.exists(os.path.join(project_path, config_file)):
             analysis["config_files"].add(config_file)
@@ -1005,20 +1005,11 @@ def _prepare_container_metadata(config: 'AppConfig', project_path: str) -> 'Clas
         else:
             return config.classifier
 
-    # Try to load from separate classifier.yaml
-    try:
-        return load_classifier_metadata(project_path)
-    except FileNotFoundError:
-        # Create minimal metadata from config with auto-detected values
-        return ClassifierMetadata(
-            classifier=ClassifierVersion(
-                repository=git_info.get('repository') or get_project_name(project_path),
-                name="classifier",
-                version=version_from_tag
-            ),
-            model=ModelVersion(version=version_from_tag),
-            api=ApiVersion()
-        )
+    # If no classifier metadata found, return error
+    raise ValueError(
+        f"mlserver.yaml in {project_path} missing required 'classifier' section. "
+        "Run 'mlserver init' to create a proper configuration."
+    )
 
 
 def _generate_container_tags(metadata: 'ClassifierMetadata', config: 'AppConfig',

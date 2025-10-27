@@ -318,9 +318,59 @@ def version(
     """
     version_info = get_version_info(path)
 
+    # If no classifier project found, show only MLServer tool version
     if "error" in version_info:
-        console.print(f"[red]✗[/red] Error: {version_info['error']}", style="bold red")
-        raise typer.Exit(1)
+        error_msg = version_info['error']
+        if "mlserver.yaml not found" in error_msg:
+            # No classifier project - show MLServer tool version only
+            from .version_control import get_mlserver_commit_hash
+            import mlserver as mlserver_module
+
+            mlserver_commit = get_mlserver_commit_hash()
+            mlserver_version = mlserver_module.__version__ if hasattr(mlserver_module, '__version__') else "unknown"
+            mlserver_location = Path(mlserver_module.__file__).parent
+
+            # Determine installation type
+            install_type = "unknown"
+            if (mlserver_location.parent / '.git').exists():
+                install_type = "git (editable)"
+            elif mlserver_location.parent.name.endswith('.egg-info') or mlserver_location.parent.name.endswith('.dist-info'):
+                install_type = "package"
+            elif 'site-packages' in str(mlserver_location):
+                install_type = "pip"
+
+            if json_output:
+                mlserver_info = {
+                    "mlserver_tool": {
+                        "version": mlserver_version,
+                        "commit": mlserver_commit,
+                        "install_location": str(mlserver_location),
+                        "install_type": install_type
+                    }
+                }
+                rprint(json.dumps(mlserver_info, indent=2))
+            else:
+                console.print("[yellow]ℹ[/yellow] No classifier project found in current directory")
+                console.print()
+
+                table = Table(title="📦 MLServer Tool Version", show_header=False, title_style="bold cyan")
+                table.add_column("Property", style="yellow")
+                table.add_column("Value", style="cyan")
+
+                table.add_row("Version", mlserver_version)
+                table.add_row("Commit", mlserver_commit or "n/a")
+                table.add_row("Install Type", install_type)
+                table.add_row("Location", str(mlserver_location))
+
+                console.print(table)
+                console.print()
+                console.print("[dim]To see classifier project version, run this command from a directory with mlserver.yaml[/dim]")
+
+            return
+        else:
+            # Other error - show it
+            console.print(f"[red]✗[/red] Error: {version_info['error']}", style="bold red")
+            raise typer.Exit(1)
 
     if json_output:
         # Add mlserver tool info to JSON output if detailed
@@ -790,6 +840,22 @@ def tag(
             console.print("Use [cyan]--classifier <name>[/cyan] to specify the classifier")
             raise typer.Exit(1)
 
+        # Check that all required files exist
+        from .init_project import check_project_files
+        files_ok, missing_files = check_project_files(path, classifier)
+
+        if not files_ok:
+            console.print("[red]✗[/red] Cannot create tag: Required files are missing", style="bold red")
+            console.print()
+            console.print("[yellow]Missing files:[/yellow]")
+            for missing_file in missing_files:
+                console.print(f"  [red]✗[/red] {missing_file}")
+            console.print()
+            console.print("[cyan]Solution:[/cyan]")
+            console.print("  Run [cyan]mlserver init[/cyan] to create all required files")
+            console.print("  Or create the missing files manually")
+            raise typer.Exit(1)
+
         # Check working directory status
         is_clean, error_msg = git_mgr.check_working_directory_clean()
         if not is_clean:
@@ -819,10 +885,32 @@ def tag(
         if git_info:
             console.print(f"  [yellow]📦 Classifier commit:[/yellow] {git_info.commit}")
 
+        # Check if GitHub Actions is set up
+        from .github_actions import check_github_actions_setup
+        github_actions_configured = check_github_actions_setup(path)
+
         console.print("\n[cyan]Next steps:[/cyan]")
-        console.print("  1. Push tags to remote: [cyan]git push --tags[/cyan]")
-        console.print(f"  2. Build container: [cyan]mlserver build --classifier {classifier}[/cyan]")
-        console.print(f"  3. Push to registry: [cyan]mlserver push --classifier {classifier} --registry <url>[/cyan]")
+        if github_actions_configured:
+            console.print("  1. Push tags to remote: [cyan]git push --tags[/cyan]")
+            console.print("  2. GitHub Actions will automatically build and publish your container!")
+            console.print()
+            console.print("[dim]💡 Or build manually:[/dim]")
+            console.print(f"  - Build: [cyan]mlserver build --classifier {classifier}[/cyan]")
+            console.print(f"  - Push: [cyan]mlserver push --classifier {classifier} --registry <url>[/cyan]")
+        else:
+            console.print("  [yellow]⚠[/yellow] [bold]GitHub Actions not configured![/bold]")
+            console.print()
+            console.print("  [dim]You need to set up CI/CD before pushing tags. Choose one option:[/dim]")
+            console.print()
+            console.print("  [dim]Option 1: Add CI/CD workflow (recommended)[/dim]")
+            console.print("  1. Add workflow: [cyan]mlserver init-github[/cyan]")
+            console.print("  2. Commit and push: [cyan]git add .github && git commit -m 'Add CI/CD' && git push[/cyan]")
+            console.print("  3. Push tags: [cyan]git push --tags[/cyan]")
+            console.print()
+            console.print("  [dim]Option 2: Build and push manually[/dim]")
+            console.print("  1. Push tags: [cyan]git push --tags[/cyan]")
+            console.print(f"  2. Build: [cyan]mlserver build --classifier {classifier}[/cyan]")
+            console.print(f"  3. Push: [cyan]mlserver push --classifier {classifier} --registry <url>[/cyan]")
 
     except VersionControlError as e:
         console.print(f"[red]✗[/red] {e}", style="bold red")
@@ -1099,12 +1187,11 @@ def status():
     table.add_row("Docker", docker_status)
 
     # Check for config files
-    configs = []
-    for config_name in ["mlserver.yaml", "config.yaml"]:
-        if Path(config_name).exists():
-            configs.append(config_name)
-
-    config_status = f"[green]{', '.join(configs)}[/green]" if configs else "[yellow]No config found[/yellow]"
+    mlserver_yaml = Path("mlserver.yaml")
+    if mlserver_yaml.exists():
+        config_status = "[green]mlserver.yaml[/green]"
+    else:
+        config_status = "[yellow]No config found[/yellow]"
     table.add_row("Config Files", config_status)
 
     # Python version
@@ -1117,7 +1204,180 @@ def status():
     venv_status = f"[green]{Path(venv).name}[/green]" if venv else "[yellow]None[/yellow]"
     table.add_row("Virtual Env", venv_status)
 
+    # Check for GitHub Actions setup
+    from .github_actions import check_github_actions_setup
+    github_actions_setup = check_github_actions_setup(".")
+    github_status = "[green]✓ Configured[/green]" if github_actions_setup else "[yellow]Not configured[/yellow]"
+    table.add_row("GitHub Actions", github_status)
+
     console.print(table)
+
+
+@app.command()
+def init(
+    path: str = typer.Option(
+        ".",
+        "--path", "-p",
+        help="Path to initialize project in"
+    ),
+    classifier: Optional[str] = typer.Option(
+        None,
+        "--classifier", "-c",
+        help="Classifier name (defaults to directory name)"
+    ),
+    predictor_file: Optional[str] = typer.Option(
+        None,
+        "--predictor-file",
+        help="Name of predictor Python file (without .py extension)"
+    ),
+    predictor_class: Optional[str] = typer.Option(
+        None,
+        "--predictor-class",
+        help="Name of predictor class"
+    ),
+    no_github: bool = typer.Option(
+        False,
+        "--no-github",
+        help="Skip GitHub Actions workflow creation"
+    ),
+    force: bool = typer.Option(
+        False,
+        "--force", "-f",
+        help="Overwrite existing files"
+    ),
+):
+    """🎬 Initialize a new MLServer classifier project.
+
+    Creates all necessary files for a classifier project:
+    - mlserver.yaml (configuration file)
+    - <predictor>.py (skeleton predictor class)
+    - .github/workflows/ml-classifier-container-build.yml (CI/CD workflow)
+    - .gitignore (Python/ML project gitignore)
+
+    This command will NOT overwrite existing files unless --force is used.
+
+    Example:
+        mlserver init --classifier sentiment-analyzer
+        mlserver init --classifier my-model --predictor-file custom_predictor
+    """
+    from .init_project import init_mlserver_project
+
+    console.print("[cyan]🎬 Initializing MLServer project...[/cyan]")
+    console.print()
+
+    success, message, files = init_mlserver_project(
+        project_path=path,
+        classifier_name=classifier,
+        predictor_file=predictor_file,
+        predictor_class=predictor_class,
+        include_github_actions=not no_github,
+        force=force
+    )
+
+    if success:
+        if files:
+            console.print("[green]✓[/green] Created files:")
+            for file_type, file_path in files.items():
+                console.print(f"  [yellow]→[/yellow] {file_path}")
+            console.print()
+
+        # Show the message (may include skipped files)
+        for line in message.split('\n'):
+            if line.strip():
+                if 'Skipped' in line or 'already exist' in line:
+                    console.print(f"[yellow]{line}[/yellow]")
+                else:
+                    console.print(line)
+        console.print()
+
+        # Show next steps
+        console.print("[bold cyan]Next steps:[/bold cyan]")
+        console.print("  1. Implement your predictor: Edit the generated Python file")
+        console.print("  2. Configure settings: Review and update [cyan]mlserver.yaml[/cyan]")
+        console.print("  3. Test locally: [cyan]mlserver serve[/cyan]")
+        console.print("  4. Commit changes: [cyan]git add . && git commit -m 'Initial setup'[/cyan]")
+        console.print("  5. Create version tag: [cyan]mlserver tag patch --classifier <name>[/cyan]")
+        console.print("  6. Push to trigger CI/CD: [cyan]git push --tags[/cyan]")
+    else:
+        console.print(f"[red]✗[/red] {message}", style="bold red")
+        raise typer.Exit(1)
+
+
+@app.command(name="init-github")
+def init_github(
+    path: str = typer.Option(
+        ".",
+        "--path", "-p",
+        help="Path to classifier project"
+    ),
+    python_version: str = typer.Option(
+        "3.11",
+        "--python-version",
+        help="Python version for CI/CD workflow"
+    ),
+    registry: str = typer.Option(
+        "ghcr.io",
+        "--registry",
+        help="Container registry (default: ghcr.io for GitHub Container Registry)"
+    ),
+    force: bool = typer.Option(
+        False,
+        "--force", "-f",
+        help="Overwrite existing workflow files"
+    ),
+):
+    """🔧 Initialize GitHub Actions CI/CD workflow for automated container builds.
+
+    Sets up automated building and publishing of containers to GitHub Container Registry
+    when version tags are pushed. The workflow is triggered by hierarchical tags created
+    with the 'mlserver tag' command.
+
+    This command:
+    - Creates .github/workflows/ml-classifier-container-build.yml
+    - Configures automated Docker builds on tag push
+    - Sets up container publishing to GitHub Container Registry
+    - Auto-detects your GitHub repository information
+
+    Note: This is automatically created by 'mlserver init', so you typically don't need
+    to run this separately unless you want to add CI/CD to an existing project.
+
+    After running this command, commit the files and use 'mlserver tag' to create version tags.
+    """
+    from .github_actions import init_github_actions
+
+    console.print("[cyan]🔧 Initializing GitHub Actions CI/CD...[/cyan]")
+    console.print()
+
+    success, message, files = init_github_actions(
+        project_path=path,
+        python_version=python_version,
+        registry=registry,
+        force=force
+    )
+
+    if success:
+        console.print("[green]✓[/green] " + message.split('\n')[0])
+        console.print()
+
+        # Show created files
+        if files:
+            console.print("[bold]Created files:[/bold]")
+            for file_type, file_path in files.items():
+                console.print(f"  [yellow]→[/yellow] {file_path}")
+            console.print()
+
+        # Show next steps
+        console.print("[bold cyan]Next steps:[/bold cyan]")
+        console.print("  1. Review workflow: [cyan].github/workflows/ml-classifier-container-build.yml[/cyan]")
+        console.print("  2. Commit changes: [cyan]git add .github && git commit -m 'Add CI/CD workflow'[/cyan]")
+        console.print("  3. Push to GitHub: [cyan]git push[/cyan]")
+        console.print("  4. Create version tag: [cyan]mlserver tag patch --classifier <name>[/cyan]")
+        console.print("  5. Push tag: [cyan]git push --tags[/cyan]")
+        console.print()
+        console.print("[dim]The workflow will automatically build and publish your container to GHCR![/dim]")
+    else:
+        console.print(f"[red]✗[/red] {message}", style="bold red")
+        raise typer.Exit(1)
 
 
 @app.callback()
