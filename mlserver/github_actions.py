@@ -165,12 +165,14 @@ jobs:
           pip install --upgrade pip
           pip install "git+{mlserver_source_url}@${{{{ steps.parse.outputs.mlserver_commit }}}}"
 
-          # Verify installation with version command
+          # Verify installation with version command (from /tmp to avoid config parsing)
           echo "Verifying MLServer installation:"
+          cd /tmp
           mlserver version --json
+          cd -
 
           # Extract and verify commit from version output
-          INSTALLED_COMMIT=$(mlserver version --json | python -c "import sys, json; print(json.load(sys.stdin)['mlserver_tool']['commit'])")
+          INSTALLED_COMMIT=$(cd /tmp && mlserver version --json | python -c "import sys, json; print(json.load(sys.stdin)['mlserver_tool']['commit'])")
           EXPECTED_COMMIT="${{{{ steps.parse.outputs.mlserver_commit }}}}"
 
           echo "Expected MLServer commit: $EXPECTED_COMMIT"
