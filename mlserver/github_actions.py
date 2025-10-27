@@ -319,9 +319,9 @@ jobs:
           echo "**Tag:** ${{{{ steps.parse.outputs.full_tag }}}}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Published Images:**" >> $GITHUB_STEP_SUMMARY
-          echo "- \`${{{{ steps.push.outputs.image_latest }}}}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- \`${{{{ steps.push.outputs.image_version }}}}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- \`${{{{ steps.push.outputs.image_fulltag }}}}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- \\`${{{{ steps.push.outputs.image_latest }}}}\\`" >> $GITHUB_STEP_SUMMARY
+          echo "- \\`${{{{ steps.push.outputs.image_version }}}}\\`" >> $GITHUB_STEP_SUMMARY
+          echo "- \\`${{{{ steps.push.outputs.image_fulltag }}}}\\`" >> $GITHUB_STEP_SUMMARY
 """
 
     return template
