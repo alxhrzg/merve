@@ -19,12 +19,161 @@ from .version import (
     get_version_info,
     get_repository_name
 )
+from .version_control import (
+    get_mlserver_commit_hash,
+    parse_hierarchical_tag,
+    GitVersionManager
+)
 from .settings import get_settings
 
 
 class ContainerError(Exception):
     """Container build/push related error."""
     pass
+
+
+def generate_container_labels(
+    project_path: str,
+    classifier_name: Optional[str] = None,
+    config: Optional['AppConfig'] = None
+) -> Dict[str, str]:
+    """Generate Docker labels for full container traceability.
+
+    Creates comprehensive labels including:
+    - Standard OCI image labels
+    - MLServer tool version and commit
+    - Classifier version and git information
+    - Build timestamp
+
+    Args:
+        project_path: Path to classifier project
+        classifier_name: Name of classifier being built
+        config: AppConfig instance (optional)
+
+    Returns:
+        Dictionary of label keys and values for Dockerfile LABEL directives
+
+    Example:
+        >>> labels = generate_container_labels("/path/to/project", "sentiment")
+        >>> labels["com.mlserver.commit"]
+        'b5dff2a'
+        >>> labels["com.classifier.git_tag"]
+        'sentiment-v1.0.0-mlserver-b5dff2a'
+    """
+    labels = {}
+
+    # Get current timestamp
+    build_time = datetime.utcnow().isoformat() + "Z"
+
+    # ========================================================================
+    # MLServer Tool Information
+    # ========================================================================
+
+    # Get mlserver commit hash
+    mlserver_commit = get_mlserver_commit_hash()
+    if mlserver_commit:
+        labels["com.mlserver.commit"] = mlserver_commit
+
+    # Get mlserver git URL
+    mlserver_git_url = _get_mlserver_git_url()
+    if mlserver_git_url:
+        labels["com.mlserver.git_url"] = mlserver_git_url
+
+    # Get mlserver version from package
+    try:
+        import mlserver
+        if hasattr(mlserver, '__version__'):
+            labels["com.mlserver.version"] = mlserver.__version__
+    except Exception:
+        pass
+
+    # ========================================================================
+    # Classifier Repository Information
+    # ========================================================================
+
+    # Get classifier git info
+    classifier_git_info = get_git_info(project_path)
+    if classifier_git_info:
+        labels["com.classifier.git_commit"] = classifier_git_info.commit
+        labels["com.classifier.git_branch"] = classifier_git_info.branch
+
+        if classifier_git_info.tag:
+            labels["com.classifier.git_tag"] = classifier_git_info.tag
+
+    # Get classifier git remote URL
+    try:
+        result = subprocess.run(
+            ["git", "config", "--get", "remote.origin.url"],
+            cwd=project_path,
+            capture_output=True,
+            text=True,
+            check=False
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            labels["com.classifier.git_url"] = result.stdout.strip()
+    except Exception:
+        pass
+
+    # ========================================================================
+    # Classifier Version Information
+    # ========================================================================
+
+    if classifier_name:
+        labels["com.classifier.name"] = classifier_name
+
+        # Get version from git tag
+        git_mgr = GitVersionManager(project_path)
+        version = git_mgr.get_current_version(classifier_name)
+        if version:
+            labels["com.classifier.version"] = version
+
+        # If on a tagged commit, parse the tag for full info
+        if classifier_git_info and classifier_git_info.tag:
+            parsed = parse_hierarchical_tag(classifier_git_info.tag)
+            if parsed["format"] == "valid" and parsed["classifier"] == classifier_name:
+                # Tag matches this classifier
+                labels["com.classifier.version"] = parsed["version"]
+                labels["com.classifier.tag.mlserver_commit"] = parsed["mlserver_commit"]
+
+    # Repository name
+    repo_name = get_repository_name(project_path)
+    labels["com.classifier.repository"] = repo_name
+
+    # ========================================================================
+    # Standard OCI Labels
+    # ========================================================================
+
+    # Image metadata
+    if classifier_name:
+        labels["org.opencontainers.image.title"] = f"{classifier_name}-classifier"
+        labels["org.opencontainers.image.description"] = f"ML classifier: {classifier_name}"
+
+    # Version from classifier
+    if "com.classifier.version" in labels:
+        labels["org.opencontainers.image.version"] = labels["com.classifier.version"]
+
+    # Build timestamp
+    labels["org.opencontainers.image.created"] = build_time
+
+    # Source repository
+    if "com.classifier.git_url" in labels:
+        labels["org.opencontainers.image.source"] = labels["com.classifier.git_url"]
+
+    # Revision (git commit)
+    if "com.classifier.git_commit" in labels:
+        labels["org.opencontainers.image.revision"] = labels["com.classifier.git_commit"]
+
+    # ========================================================================
+    # Additional Metadata from Config
+    # ========================================================================
+
+    if config:
+        # Add predictor class information
+        if config.predictor and config.predictor.class_name:
+            labels["com.classifier.predictor.class"] = config.predictor.class_name
+            labels["com.classifier.predictor.module"] = config.predictor.module
+
+    return labels
 
 
 def _get_mlserver_git_url() -> Optional[str]:
@@ -482,7 +631,8 @@ Dockerfile
 
 def generate_dockerfile(project_path: str, config: AppConfig,
                        required_files: List[str], base_image: str = None,
-                       has_wheel: bool = False, needs_git: bool = False) -> str:
+                       has_wheel: bool = False, needs_git: bool = False,
+                       classifier_name: Optional[str] = None) -> str:
     """
     Generate Dockerfile content for the classifier project with intelligent file copying.
 
@@ -493,6 +643,7 @@ def generate_dockerfile(project_path: str, config: AppConfig,
         base_image: Base Docker image (optional)
         has_wheel: Whether a wheel file is available
         needs_git: Whether git needs to be installed in the container
+        classifier_name: Name of classifier being built (for labels)
 
     Returns:
         Dockerfile content as string
@@ -643,19 +794,36 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \\
 # Expose port
 EXPOSE 8000
 
-# Set labels for metadata
-LABEL org.opencontainers.image.title="{classifier_name}"
-LABEL org.opencontainers.image.version="{classifier_version}"
-LABEL org.opencontainers.image.description="{classifier_description}"
-LABEL ml.classifier.name="{classifier_name}"
-LABEL ml.classifier.version="{classifier_version}"
-LABEL ml.created="{datetime.now().isoformat()}"
+# Set labels for metadata (comprehensive traceability)
+{_generate_label_directives(project_path, classifier_name, config)}
 
 # Command to run the server
 CMD ["mlserver", "serve", "{config_file}"]
 '''
 
     return dockerfile_content
+
+
+def _generate_label_directives(project_path: str, classifier_name: Optional[str], config: Optional['AppConfig'] = None) -> str:
+    """Generate LABEL directives for Dockerfile from container labels.
+
+    Args:
+        project_path: Path to project
+        classifier_name: Name of classifier
+        config: AppConfig instance
+
+    Returns:
+        String containing all LABEL directives, one per line
+    """
+    labels = generate_container_labels(project_path, classifier_name, config)
+
+    label_lines = []
+    for key, value in sorted(labels.items()):
+        # Escape double quotes in values
+        escaped_value = value.replace('"', '\\"')
+        label_lines.append(f'LABEL {key}="{escaped_value}"')
+
+    return "\n".join(label_lines)
 
 
 def _load_container_config(project_path: str, config_file: Optional[str] = None, classifier_name: Optional[str] = None) -> 'AppConfig':
@@ -793,9 +961,27 @@ def _prepare_container_metadata(config: 'AppConfig', project_path: str) -> 'Clas
     """Extract or create container metadata from configuration."""
     from .version import ClassifierMetadata, ClassifierVersion, ModelVersion, ApiVersion
     from .auto_detect import get_git_info, get_project_name
+    from .version_control import parse_hierarchical_tag
 
     # Get git info for auto-detection
     git_info = get_git_info(project_path)
+
+    # Extract version from hierarchical tag if present
+    version_from_tag = '1.0.0'
+    if git_info.get('tag'):
+        tag = git_info.get('tag')
+        parsed = parse_hierarchical_tag(tag)
+        if parsed['format'] == 'valid':
+            version_from_tag = parsed['version']
+        else:
+            # Fallback: try to extract version with simpler regex
+            import re
+            match = re.search(r'-v(\d+\.\d+\.\d+)', tag)
+            if match:
+                version_from_tag = match.group(1)
+            elif re.match(r'^\d+\.\d+\.\d+$', tag):
+                # Tag is already just a version
+                version_from_tag = tag
 
     if config.classifier:
         # Use classifier metadata from unified config
@@ -805,11 +991,11 @@ def _prepare_container_metadata(config: 'AppConfig', project_path: str) -> 'Clas
             if 'repository' not in classifier_data or not classifier_data['repository']:
                 classifier_data['repository'] = git_info.get('repository') or get_project_name(project_path)
             if 'version' not in classifier_data or not classifier_data['version']:
-                classifier_data['version'] = git_info.get('tag') or '1.0.0'
+                classifier_data['version'] = version_from_tag
 
             model_data = config.model or {}
             if 'version' not in model_data or not model_data['version']:
-                model_data['version'] = git_info.get('tag') or '1.0.0'
+                model_data['version'] = version_from_tag
 
             return ClassifierMetadata.model_validate({
                 "classifier": classifier_data,
@@ -828,9 +1014,9 @@ def _prepare_container_metadata(config: 'AppConfig', project_path: str) -> 'Clas
             classifier=ClassifierVersion(
                 repository=git_info.get('repository') or get_project_name(project_path),
                 name="classifier",
-                version=git_info.get('tag') or "1.0.0"
+                version=version_from_tag
             ),
-            model=ModelVersion(version=git_info.get('tag') or "1.0.0"),
+            model=ModelVersion(version=version_from_tag),
             api=ApiVersion()
         )
 
@@ -954,7 +1140,7 @@ def _write_docker_files(project_path: str, config: 'AppConfig', required_files: 
             required_files.append(f".mlserver.{classifier_name}.yaml")
 
     # Generate Dockerfile
-    dockerfile_content = generate_dockerfile(project_path, config, required_files, base_image, has_wheel, needs_git)
+    dockerfile_content = generate_dockerfile(project_path, config, required_files, base_image, has_wheel, needs_git, classifier_name)
 
     # If we created a temp config, update Dockerfile to rename it to mlserver.yaml
     if temp_config_file:

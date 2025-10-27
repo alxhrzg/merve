@@ -362,6 +362,173 @@ git push origin feature/your-feature-name
 # Create pull request on GitHub
 ```
 
+### Version Management in Development
+
+#### Understanding Hierarchical Tags
+
+MLServer uses hierarchical tags for complete reproducibility:
+```
+<classifier-name>-v<X.X.X>-mlserver-<commit-hash>
+Example: sentiment-v2.3.1-mlserver-b5dff2a
+```
+
+This format captures:
+- **Classifier version**: Semantic version of your classifier code
+- **MLServer commit**: Exact version of the MLServer tool used
+
+#### Creating Versions During Development
+
+```bash
+# Check current version status
+mlserver tag
+
+# Output shows current versions and recommendations:
+#                    🏷️  Classifier Version Status
+# ┏━━━━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━━━━━━━━━━┓
+# ┃ Classifier ┃ Version ┃ MLServer  ┃ Status ┃ Action Required ┃
+# ┡━━━━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━━━━━━━━━━┩
+# │ sentiment  │ 1.0.0   │ b5dff2a ✓ │ Ready  │ -               │
+# └────────────┴─────────┴───────────┴────────┴─────────────────┘
+
+# Create version tag after completing feature
+mlserver tag --classifier sentiment patch  # For bug fixes
+mlserver tag --classifier sentiment minor  # For new features
+mlserver tag --classifier sentiment major  # For breaking changes
+
+# Push tags to remote
+git push --tags
+```
+
+#### Testing Reproducibility
+
+Before creating a PR, verify your build is reproducible:
+
+```bash
+# 1. Create a tag for your changes
+mlserver tag --classifier sentiment patch
+
+# 2. Note the created tag (e.g., sentiment-v1.0.1-mlserver-b5dff2a)
+
+# 3. Build container with the tag
+mlserver build --classifier sentiment-v1.0.1-mlserver-b5dff2a
+
+# 4. Verify container labels include version info
+docker inspect sentiment:latest | grep -A 20 Labels
+
+# 5. Test the container
+docker run -p 8000:8000 sentiment:latest
+
+# 6. Verify version endpoint
+curl http://localhost:8000/version
+```
+
+#### Multi-Classifier Development
+
+For repositories with multiple classifiers:
+
+```bash
+# Check status of all classifiers
+mlserver tag
+
+# Work on specific classifier
+cd classifiers/sentiment
+
+# Make changes...
+
+# Tag only the classifier you modified
+mlserver tag --classifier sentiment patch
+
+# Other classifiers maintain their versions independently
+mlserver tag --classifier intent minor  # If you also modified intent
+```
+
+#### Version Bumping Guidelines
+
+Choose the right semantic version bump:
+
+- **Patch (X.X.Y)**: Bug fixes, minor improvements, no API changes
+  ```bash
+  mlserver tag --classifier sentiment patch
+  ```
+
+- **Minor (X.Y.0)**: New features, backward compatible
+  ```bash
+  mlserver tag --classifier sentiment minor
+  ```
+
+- **Major (Y.0.0)**: Breaking changes, API modifications
+  ```bash
+  mlserver tag --classifier sentiment major
+  ```
+
+#### Validating Before PR
+
+Run this checklist before creating your PR:
+
+```bash
+# 1. Run all tests
+pytest tests/ --cov=mlserver
+
+# 2. Check working directory is clean
+git status
+
+# 3. View tag status
+mlserver tag
+
+# 4. If tests pass and everything looks good, create tag
+mlserver tag --classifier <name> <patch|minor|major>
+
+# 5. Build and test container
+mlserver build --classifier <tag-name>
+
+# 6. Validate push readiness (checks for uncommitted changes)
+mlserver version --detailed
+```
+
+#### Common Version Management Scenarios
+
+**Scenario 1: Forgot to tag before pushing**
+```bash
+# No problem! Create tag now
+mlserver tag --classifier sentiment patch
+
+# Push the tag separately
+git push --tags
+```
+
+**Scenario 2: Need to fix a bug in an old version**
+```bash
+# Checkout the old tag
+git checkout sentiment-v1.0.0-mlserver-abc123
+
+# Create a branch
+git checkout -b hotfix/sentiment-security-fix
+
+# Make fixes, commit
+git commit -m "fix: security vulnerability"
+
+# Create new patch version
+mlserver tag --classifier sentiment patch  # Creates v1.0.1
+
+# Push branch and tag
+git push origin hotfix/sentiment-security-fix --tags
+```
+
+**Scenario 3: Working with uncommitted changes**
+```bash
+# Try to create tag with uncommitted changes
+mlserver tag --classifier sentiment patch
+
+# Output:
+# ⚠️  Warning: Working directory has uncommitted changes
+# ❌ Cannot create tag with uncommitted changes
+
+# Solution: Commit your changes first
+git add .
+git commit -m "feat: add new feature"
+mlserver tag --classifier sentiment minor
+```
+
 ### Pull Request Guidelines
 
 - Clear, descriptive title
@@ -370,6 +537,8 @@ git push origin feature/your-feature-name
 - Update documentation
 - Follow existing code style
 - Add changelog entry
+- **Create version tag** for significant changes
+- **Test reproducibility** with container builds
 
 ## Performance Optimization
 

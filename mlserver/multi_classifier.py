@@ -112,9 +112,32 @@ def list_available_classifiers(config_file: str) -> List[str]:
         List of classifier names
     """
     try:
-        # Try loading as multi-classifier config
-        multi_config = load_multi_classifier_config(config_file)
-        return list(multi_config.classifiers.keys())
+        with open(config_file, 'r') as f:
+            raw_config = yaml.safe_load(f)
+
+        if "classifiers" not in raw_config:
+            return []
+
+        classifiers = raw_config["classifiers"]
+
+        # Handle list format (array of classifier configs)
+        if isinstance(classifiers, list):
+            names = []
+            for clf in classifiers:
+                if isinstance(clf, dict):
+                    # Try to get name from various possible locations
+                    if "name" in clf:
+                        names.append(clf["name"])
+                    elif "classifier" in clf and isinstance(clf["classifier"], dict):
+                        if "name" in clf["classifier"]:
+                            names.append(clf["classifier"]["name"])
+            return names
+
+        # Handle dict format (dict of classifier configs)
+        elif isinstance(classifiers, dict):
+            return list(classifiers.keys())
+
+        return []
     except Exception:
         # Fall back to single classifier (no list available)
         return []
@@ -133,8 +156,11 @@ def detect_multi_classifier_config(config_file: str) -> bool:
         with open(config_file, 'r') as f:
             raw_config = yaml.safe_load(f)
 
-        # Check for multi-classifier structure
-        return "classifiers" in raw_config and isinstance(raw_config["classifiers"], dict)
+        # Check for multi-classifier structure (supports both dict and list formats)
+        return "classifiers" in raw_config and (
+            isinstance(raw_config["classifiers"], dict) or
+            isinstance(raw_config["classifiers"], list)
+        )
     except Exception:
         return False
 

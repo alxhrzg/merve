@@ -42,11 +42,14 @@ mlserver --help  # Show all commands with rich formatting
 ╭─ Commands ──────────────────────────────────────────────────────╮
 │ serve              🚀 Start ML server with FastAPI              │
 │ ainit              🤖 AI-powered initialization from notebook   │
+│ tag                🏷️  Create version tag with reproducibility   │
 │ build              📦 Build Docker container                    │
 │ push               🚢 Push container to registry                │
 │ status             📊 Show system status                        │
 │ list-classifiers   📋 List available classifiers               │
 │ version            ℹ️  Show version information                  │
+│ images             🖼️  List Docker images                        │
+│ clean              🧹 Remove Docker images                      │
 ╰──────────────────────────────────────────────────────────────────╯
 ```
 
@@ -159,9 +162,137 @@ mlserver ainit notebook.ipynb --config-only
 
 ---
 
+### `tag` - Version Tagging & Reproducibility
+
+Create semantic version tags with full reproducibility tracking. Tags include both classifier and MLServer tool commits for complete traceability.
+
+#### Hierarchical Tag Format
+
+Tags follow the format: `<classifier-name>-v<X.X.X>-mlserver-<commit-hash>`
+
+Example: `sentiment-v1.0.3-mlserver-b5dff2a`
+
+This format ensures:
+- **Semantic versioning** for classifier code
+- **MLServer tool version** tracking
+- **Complete reproducibility** - exact commits for both classifier and MLServer
+
+#### Syntax
+```bash
+# Create new tag
+mlserver tag --classifier <name> <major|minor|patch>
+
+# Show tag status for all classifiers
+mlserver tag
+
+# Show tag status with MLServer commit info
+mlserver tag --detailed
+```
+
+#### Options
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--classifier <name>` | Classifier to tag | Required for tagging |
+| `<bump>` | Version bump type | Required: major\|minor\|patch |
+| `--force` | Allow tagging with uncommitted changes | `false` |
+| `--allow-missing-mlserver` | Tag without MLServer commit (dev mode) | `false` |
+
+#### Examples
+
+**Create Tags:**
+```bash
+# Patch release (bug fixes)
+mlserver tag --classifier sentiment patch
+
+# Minor release (new features, backward compatible)
+mlserver tag --classifier intent minor
+
+# Major release (breaking changes)
+mlserver tag --classifier fraud major
+```
+
+**Output:**
+```
+✓ Created tag: sentiment-v1.0.3-mlserver-b5dff2a
+
+  📝 Version: 1.0.2 → 1.0.3 (patch bump)
+  🔧 MLServer commit: b5dff2a
+  📦 Classifier commit: c5f9997
+
+Next steps:
+  1. Push tags to remote: git push --tags
+  2. Build container: mlserver build --classifier sentiment
+  3. Push to registry: mlserver push --registry <url>
+```
+
+**View Status:**
+```bash
+# Show all classifier tag status
+mlserver tag
+```
+
+**Output:**
+```
+                      🏷️  Classifier Version Status
+┏━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━━━━━━━━━━┓
+┃ Classifier        ┃ Version ┃ MLServer  ┃ Status ┃ Action Required ┃
+┡━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━━━━━━━━━━┩
+│ sentiment         │ 1.0.3   │ b5dff2a ✓ │ Ready  │ -               │
+│ intent            │ 2.0.1   │ b5dff2a ✓ │ Ready  │ -               │
+│ fraud             │ 0.5.0   │ a3c2f1d ⚠ │ Behind │ Update MLServer │
+└───────────────────┴─────────┴───────────┴────────┴─────────────────┘
+
+Current MLServer commit: b5dff2a
+```
+
+#### Tag Validation
+
+Tags are validated before creation:
+- ✅ Working directory must be clean (or use `--force`)
+- ✅ Classifier code must be committed
+- ✅ MLServer commit must be available (or use `--allow-missing-mlserver`)
+- ✅ Version must follow semantic versioning
+
+#### Reproducibility Workflow
+
+1. **Tag Creation**: Captures exact state
+   ```bash
+   mlserver tag --classifier sentiment patch
+   # Creates: sentiment-v1.0.3-mlserver-b5dff2a
+   ```
+
+2. **Build Container**: Uses tag information
+   ```bash
+   mlserver build --classifier sentiment-v1.0.3-mlserver-b5dff2a
+   ```
+   - Validates current code matches tag
+   - Adds container labels with all commit info
+   - Warns if code has changed since tag
+
+3. **Reproduce Exact Build**: Checkout and rebuild
+   ```bash
+   git checkout sentiment-v1.0.3-mlserver-b5dff2a
+   mlserver build --classifier sentiment
+   ```
+
+#### Multi-Classifier Tagging
+
+Each classifier is tagged independently:
+```bash
+# Tag different classifiers at different versions
+mlserver tag --classifier sentiment patch  # v1.0.3
+mlserver tag --classifier intent minor     # v2.1.0
+mlserver tag --classifier fraud major      # v3.0.0
+
+# View all tags
+mlserver tag
+```
+
+---
+
 ### `build` - Build Docker Container
 
-Build a Docker container for the ML server.
+Build a Docker container for the ML server with full reproducibility tracking.
 
 #### Syntax
 ```bash
@@ -172,18 +303,64 @@ mlserver build [options]
 #### Options
 | Option | Description | Default |
 |--------|-------------|---------|
-| `--tag` | Container tag | Auto-generate |
+| `--classifier <name>` | Classifier name or full hierarchical tag | Auto-detect |
+| `--tag` | Container tag override | Auto-generate from git tag |
 | `--registry` | Registry URL | None |
 | `--config` | Config file path | Auto-detect |
 | `--no-cache` | Disable Docker cache | `false` |
 | `--platform` | Target platform | `linux/amd64` |
 | `--push` | Push after build | `false` |
+| `--force` | Skip validation warnings | `false` |
 
 #### Examples
+
+**Simple Build:**
 ```bash
 # Auto-build with version tag
 mlserver build
 
+# Build specific classifier
+mlserver build --classifier sentiment
+```
+
+**Build with Full Hierarchical Tag:**
+```bash
+# Build exact tagged version (with validation)
+mlserver build --classifier sentiment-v1.0.3-mlserver-b5dff2a
+
+# Output shows validation:
+🏗️  Building container...
+→ Full tag provided: sentiment-v1.0.3-mlserver-b5dff2a
+
+✓ Current code matches tag specification
+
+→ Building for classifier: sentiment
+```
+
+**Validation Warnings:**
+```bash
+# If code doesn't match tag
+mlserver build --classifier sentiment-v1.0.2-mlserver-old123
+
+⚠️  Warning: Current code doesn't match tag specifications
+
+Tag specifies:
+  Classifier commit: 08472c7
+  MLServer commit:   old123
+
+Current working directory:
+  Classifier commit: c5f9997 ⚠️  MISMATCH
+  MLServer commit:   b5dff2a ⚠️  MISMATCH
+
+Building with CURRENT code. To build exact tagged version:
+  git checkout sentiment-v1.0.2-mlserver-old123
+
+# Use --force to skip prompt
+mlserver build --classifier sentiment-v1.0.2-mlserver-old123 --force
+```
+
+**Advanced Builds:**
+```bash
 # Custom tag
 mlserver build --tag my-model:v1.0.0
 
@@ -197,13 +374,53 @@ mlserver build --no-cache
 mlserver build --platform linux/amd64,linux/arm64
 ```
 
+#### Container Labels
+
+Built containers include comprehensive labels for full traceability:
+```dockerfile
+# Classifier information
+LABEL com.classifier.name="sentiment"
+LABEL com.classifier.version="1.0.3"
+LABEL com.classifier.git_tag="sentiment-v1.0.3-mlserver-b5dff2a"
+LABEL com.classifier.git_commit="c5f9997"
+LABEL com.classifier.git_branch="main"
+
+# MLServer tool information
+LABEL com.mlserver.version="0.3.2"
+LABEL com.mlserver.commit="b5dff2a"
+LABEL com.mlserver.git_url="https://github.com/org/mlserver"
+
+# OCI standard labels
+LABEL org.opencontainers.image.version="1.0.3"
+LABEL org.opencontainers.image.created="2025-10-27T10:30:00Z"
+LABEL org.opencontainers.image.title="sentiment ML Server"
+```
+
+#### Reproducibility
+
+Container labels enable exact reproduction:
+```bash
+# Inspect container to get tag
+docker inspect my-container | grep com.classifier.git_tag
+
+# Checkout exact version
+git checkout sentiment-v1.0.3-mlserver-b5dff2a
+
+# Rebuild identically
+mlserver build --classifier sentiment
+```
+
 #### Output
 ```
-🔨 Building Docker container...
-📦 Base image: python:3.9-slim
+🏗️  Building Docker container...
+→ Classifier: sentiment v1.0.3
+→ MLServer: b5dff2a
+→ Base image: python:3.9-slim
+
 📝 Installing dependencies...
-✅ Built: my-model:v1.0.0
+✅ Built: sentiment:v1.0.3
 📏 Size: 450 MB
+🏷️  Labels: 17 added for traceability
 ```
 
 ---
@@ -292,7 +509,7 @@ mlserver list-classifiers [config]
 
 ### `version` - Version Information
 
-Display version and environment information.
+Display version and environment information, including MLServer tool details.
 
 #### Syntax
 ```bash
@@ -304,28 +521,94 @@ mlserver version [options]
 | Option | Description | Default |
 |--------|-------------|---------|
 | `--json` | JSON output | `false` |
-| `--detailed` | Include dependencies | `false` |
+| `--detailed` | Include MLServer tool information | `false` |
 
 #### Examples
 ```bash
-# Basic version
+# Basic version (classifier only)
 mlserver version
 
 # JSON format
 mlserver version --json
 
-# With dependencies
+# With MLServer tool details
 mlserver version --detailed
 ```
 
 #### Output (Modern CLI)
+
+**Basic:**
 ```
 ╭─ MLServer Version ───────────────────────────────────────────────╮
-│ MLServer     │ 0.2.0                                            │
+│ Classifier   │ sentiment                                        │
+│ Version      │ 1.0.3                                            │
 │ Python       │ 3.9.15                                           │
 │ FastAPI      │ 0.110.0                                          │
 │ Platform     │ Darwin 24.0.0                                    │
 ╰──────────────────────────────────────────────────────────────────╯
+```
+
+**Detailed (with `--detailed` flag):**
+```
+╭─ MLServer Version ───────────────────────────────────────────────╮
+│ Classifier   │ sentiment                                        │
+│ Version      │ 1.0.3                                            │
+│ Python       │ 3.9.15                                           │
+│ FastAPI      │ 0.110.0                                          │
+│ Platform     │ Darwin 24.0.0                                    │
+│                                                                  │
+│ MLServer Tool                                                    │
+│   Version    │ 0.3.2.dev0                                       │
+│   Commit     │ b5dff2a                                          │
+│   Install    │ git (editable)                                   │
+│   Location   │ /path/to/mlserver                                │
+╰──────────────────────────────────────────────────────────────────╯
+```
+
+**JSON Output:**
+```bash
+mlserver version --json --detailed
+```
+
+```json
+{
+  "classifier": {
+    "name": "sentiment",
+    "version": "1.0.3"
+  },
+  "python": "3.9.15",
+  "fastapi": "0.110.0",
+  "platform": "Darwin 24.0.0",
+  "mlserver_tool": {
+    "version": "0.3.2.dev0",
+    "commit": "b5dff2a",
+    "install_type": "git (editable)",
+    "location": "/path/to/mlserver"
+  }
+}
+```
+
+#### Use Cases
+
+**Development:**
+```bash
+# Check which MLServer version you're developing with
+mlserver version --detailed
+
+# Verify you're using editable install
+mlserver version --detailed | grep "Install"
+```
+
+**Debugging:**
+```bash
+# Get full version info for bug reports
+mlserver version --detailed --json > version-info.json
+```
+
+**CI/CD:**
+```bash
+# Verify MLServer commit in build pipeline
+mlserver version --detailed | grep "Commit"
 ```
 
 ---

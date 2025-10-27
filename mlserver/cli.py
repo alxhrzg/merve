@@ -310,8 +310,12 @@ def serve(
 def version(
     path: str = typer.Option(".", "--path", "-p", help="Path to classifier project"),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
+    detailed: bool = typer.Option(False, "--detailed", help="Show detailed MLServer tool information"),
 ):
-    """📦 Display version information for the classifier project."""
+    """📦 Display version information for the classifier project.
+
+    Use --detailed to show MLServer tool version, commit, and installation source.
+    """
     version_info = get_version_info(path)
 
     if "error" in version_info:
@@ -319,6 +323,16 @@ def version(
         raise typer.Exit(1)
 
     if json_output:
+        # Add mlserver tool info to JSON output if detailed
+        if detailed:
+            from .version_control import get_mlserver_commit_hash
+            import mlserver as mlserver_module
+            mlserver_commit = get_mlserver_commit_hash()
+            version_info["mlserver_tool"] = {
+                "version": mlserver_module.__version__ if hasattr(mlserver_module, '__version__') else "unknown",
+                "commit": mlserver_commit,
+                "install_location": str(Path(mlserver_module.__file__).parent)
+            }
         rprint(json.dumps(version_info, indent=2))
     else:
         # Create a nice table for version info
@@ -344,6 +358,31 @@ def version(
             if git['is_dirty']:
                 table.add_row("Status", "⚠️  Uncommitted changes")
 
+        # Add MLServer tool information if --detailed
+        if detailed:
+            from .version_control import get_mlserver_commit_hash
+            import mlserver as mlserver_module
+
+            mlserver_commit = get_mlserver_commit_hash()
+            mlserver_version = mlserver_module.__version__ if hasattr(mlserver_module, '__version__') else "unknown"
+            mlserver_location = Path(mlserver_module.__file__).parent
+
+            # Determine installation type
+            install_type = "unknown"
+            if (mlserver_location.parent / '.git').exists():
+                install_type = "git (editable)"
+            elif mlserver_location.parent.name.endswith('.egg-info') or mlserver_location.parent.name.endswith('.dist-info'):
+                install_type = "package"
+            elif 'site-packages' in str(mlserver_location):
+                install_type = "pip"
+
+            table.add_section()
+            table.add_row("[bold]MLServer Tool[/bold]", "")
+            table.add_row("  Version", mlserver_version)
+            table.add_row("  Commit", mlserver_commit or "n/a")
+            table.add_row("  Install Type", install_type)
+            table.add_row("  Location", str(mlserver_location))
+
         console.print(table)
 
         # Container tags
@@ -364,7 +403,7 @@ def build(
     classifier: Optional[str] = typer.Option(
         None,
         "--classifier", "-c",
-        help="Classifier to build (required for multi-classifier configs)"
+        help="Classifier to build (can be simple name or full tag: name-vX.Y.Z-mlserver-hash)"
     ),
     path: str = typer.Option(
         ".",
@@ -401,13 +440,95 @@ def build(
         "--verbose", "-v",
         help="Verbose output"
     ),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        help="Skip validation prompts and continue with build"
+    ),
 ):
-    """🏗️  Build Docker container for the classifier project."""
+    """🏗️  Build Docker container for the classifier project.
+
+    The --classifier parameter accepts both simple names and full hierarchical tags:
+    - Simple: --classifier sentiment
+    - Full tag: --classifier sentiment-v1.0.0-mlserver-b5dff2a
+
+    When using a full tag, the build will validate that your current code matches
+    the tag's expected commits and warn if there are mismatches.
+    """
     if not check_docker_availability():
         console.print("[red]✗[/red] Docker is not available or not running", style="bold red")
         raise typer.Exit(1)
 
     console.print("[cyan]🏗️  Building container...[/cyan]")
+
+    # Parse classifier name (handles both simple names and full tags)
+    original_input = classifier
+    if classifier:
+        from .version_control import extract_classifier_name, parse_hierarchical_tag, get_tag_commits, get_mlserver_commit_hash
+        from .version import get_git_info
+
+        # Extract classifier name from full tag if provided
+        classifier_name = extract_classifier_name(classifier)
+        if not classifier_name:
+            console.print(f"[red]✗[/red] Invalid classifier name format: {classifier}", style="bold red")
+            raise typer.Exit(1)
+
+        # If full tag was provided, validate commits
+        parsed = parse_hierarchical_tag(original_input)
+        if parsed['format'] == 'valid':
+            console.print(f"[yellow]→[/yellow] Full tag provided: [cyan]{original_input}[/cyan]")
+            console.print()
+
+            # Get expected commits from tag
+            tag_commits = get_tag_commits(original_input, path)
+            expected_classifier_commit = tag_commits['classifier_commit']
+            expected_mlserver_commit = parsed['mlserver_commit']
+
+            # Get current commits
+            git_info = get_git_info(path)
+            current_classifier_commit = git_info.commit if git_info else None
+            current_mlserver_commit = get_mlserver_commit_hash()
+
+            # Normalize commit hashes to 7 characters for comparison
+            def normalize_commit(commit):
+                return commit[:7] if commit else None
+
+            expected_classifier_commit_short = normalize_commit(expected_classifier_commit)
+            current_classifier_commit_short = normalize_commit(current_classifier_commit)
+            expected_mlserver_commit_short = normalize_commit(expected_mlserver_commit)
+            current_mlserver_commit_short = normalize_commit(current_mlserver_commit)
+
+            # Check for mismatches
+            classifier_mismatch = (expected_classifier_commit_short and current_classifier_commit_short and
+                                 expected_classifier_commit_short != current_classifier_commit_short)
+            mlserver_mismatch = (expected_mlserver_commit_short and current_mlserver_commit_short and
+                               expected_mlserver_commit_short != current_mlserver_commit_short)
+
+            if classifier_mismatch or mlserver_mismatch:
+                console.print("[yellow]⚠️  Warning: Current code doesn't match tag specifications[/yellow]")
+                console.print()
+                console.print("[dim]Tag specifies:[/dim]")
+                console.print(f"  Classifier commit: {expected_classifier_commit_short or 'unknown'}")
+                console.print(f"  MLServer commit:   {expected_mlserver_commit_short}")
+                console.print()
+                console.print("[dim]Current working directory:[/dim]")
+                console.print(f"  Classifier commit: {current_classifier_commit_short or 'unknown'} {'[red]⚠️  MISMATCH[/red]' if classifier_mismatch else '[green]✓[/green]'}")
+                console.print(f"  MLServer commit:   {current_mlserver_commit_short or 'unknown'} {'[red]⚠️  MISMATCH[/red]' if mlserver_mismatch else '[green]✓[/green]'}")
+                console.print()
+                console.print("[yellow]Building with CURRENT code.[/yellow] To build exact tagged version:")
+                console.print(f"  [cyan]git checkout {original_input}[/cyan]")
+                console.print()
+
+                if not force:
+                    if not typer.confirm("Continue with build?"):
+                        console.print("[yellow]Build cancelled[/yellow]")
+                        raise typer.Exit(0)
+            else:
+                console.print("[green]✓[/green] Current code matches tag specification")
+                console.print()
+
+        # Use extracted classifier name for the rest of the build
+        classifier = classifier_name
 
     # Detect config file
     config_file = detect_config_file(config)
@@ -590,6 +711,11 @@ def tag(
         "--path",
         help="Path to classifier project"
     ),
+    allow_missing_mlserver: bool = typer.Option(
+        False,
+        "--allow-missing-mlserver",
+        help="Allow tagging even if mlserver commit cannot be determined (dev/testing only)"
+    ),
 ):
     """🏷️  Manage version tags for classifiers.
 
@@ -607,10 +733,15 @@ def tag(
             # Get status for all classifiers
             classifiers_status = git_mgr.get_all_classifiers_tag_status(str(config_file))
 
-            # Create table
+            # Get current mlserver commit for comparison
+            from .version_control import get_mlserver_commit_hash, parse_hierarchical_tag
+            current_mlserver_commit = get_mlserver_commit_hash() or "unknown"
+
+            # Create table with MLServer commit column
             table = Table(title="🏷️  Classifier Version Status", title_style="bold cyan")
             table.add_column("Classifier", style="cyan")
             table.add_column("Version", style="yellow")
+            table.add_column("MLServer", style="blue")
             table.add_column("Status", style="green")
             table.add_column("Action Required", style="magenta")
 
@@ -618,6 +749,20 @@ def tag(
                 version = status['current_version'] or "No tags"
                 status_text = status['status']
                 recommendation = status['recommendation'] or "-"
+
+                # Extract mlserver commit from the latest tag
+                mlserver_commit = "-"
+                if status.get('latest_tag'):
+                    parsed = parse_hierarchical_tag(status['latest_tag'])
+                    if parsed['format'] == 'valid':
+                        tag_mlserver = parsed['mlserver_commit'][:7]
+                        current_mlserver_short = current_mlserver_commit[:7]
+                        if tag_mlserver == current_mlserver_short:
+                            mlserver_commit = f"{tag_mlserver} [green]✓[/green]"
+                        else:
+                            mlserver_commit = f"{tag_mlserver} [yellow]⚠️[/yellow]"
+                    else:
+                        mlserver_commit = "[dim]n/a[/dim]"
 
                 # Color coding for status
                 if status['on_tagged_commit']:
@@ -630,11 +775,13 @@ def tag(
                 table.add_row(
                     clf_name,
                     version,
+                    mlserver_commit,
                     f"[{status_style}]{status_text}[/{status_style}]",
                     recommendation
                 )
 
             console.print(table)
+            console.print(f"\n[dim]Current MLServer commit: {current_mlserver_commit[:7]}[/dim]")
             return
 
         # Tagging mode - classifier is required
@@ -650,17 +797,27 @@ def tag(
             console.print("[yellow]→[/yellow] Commit your changes first with: [cyan]git add . && git commit -m 'message'[/cyan]")
             raise typer.Exit(1)
 
-        # Get current version info for this classifier
-        current_version = git_mgr.get_current_version(classifier)
-
         # Create the tag
-        new_version = git_mgr.tag_version(bump_type.value, classifier, message)
+        tag_info = git_mgr.tag_version(bump_type.value, classifier, message, allow_missing_mlserver)
 
-        console.print(f"[green]✓[/green] Created tag {classifier}-v{new_version}")
-        if current_version:
-            console.print(f"  [yellow]→[/yellow] {classifier} version bumped from {current_version} to {new_version}")
+        # Display success message with all details
+        console.print(f"[green]✓[/green] Created tag: [cyan]{tag_info['tag_name']}[/cyan]")
+        console.print()
+
+        # Version info
+        if tag_info['previous_version']:
+            console.print(f"  [yellow]📝 Version:[/yellow] {tag_info['previous_version']} → {tag_info['version']} ({bump_type.value} bump)")
         else:
-            console.print(f"  [yellow]→[/yellow] First version tag for {classifier}: {new_version}")
+            console.print(f"  [yellow]📝 Version:[/yellow] {tag_info['version']} (initial release)")
+
+        # MLServer info
+        console.print(f"  [yellow]🔧 MLServer commit:[/yellow] {tag_info['mlserver_commit']}")
+
+        # Get classifier commit for reference
+        from .version import get_git_info
+        git_info = get_git_info(path)
+        if git_info:
+            console.print(f"  [yellow]📦 Classifier commit:[/yellow] {git_info.commit}")
 
         console.print("\n[cyan]Next steps:[/cyan]")
         console.print("  1. Push tags to remote: [cyan]git push --tags[/cyan]")

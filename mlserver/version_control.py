@@ -13,6 +13,199 @@ class VersionControlError(Exception):
     pass
 
 
+def get_mlserver_commit_hash() -> Optional[str]:
+    """Get the current commit hash of the mlserver tool.
+
+    This function determines the git commit hash of the mlserver-fastapi-wrapper
+    package that is currently installed. It handles various installation methods:
+    - Editable installs (pip install -e .)
+    - Git installs (pip install git+...)
+    - Development installs
+
+    Returns:
+        7-character short commit hash, or None if not from git
+    """
+    try:
+        # Get the mlserver package location
+        import mlserver
+        mlserver_file = Path(mlserver.__file__)
+
+        # Try different paths to find the git repository
+        # For editable installs: /path/to/mlserver/mlserver/__init__.py -> /path/to/mlserver
+        # For package installs: /path/to/site-packages/mlserver/__init__.py -> need to go up more
+        search_paths = [
+            mlserver_file.parent.parent,  # Standard editable: mlserver/mlserver/__init__.py -> mlserver/
+            mlserver_file.parent.parent.parent,  # Some installs might have extra nesting
+        ]
+
+        for base_path in search_paths:
+            git_dir = base_path / '.git'
+            if git_dir.exists() and git_dir.is_dir():
+                try:
+                    result = subprocess.run(
+                        ["git", "rev-parse", "--short=7", "HEAD"],
+                        cwd=base_path,
+                        capture_output=True,
+                        text=True,
+                        check=True
+                    )
+                    commit_hash = result.stdout.strip()
+                    if commit_hash:
+                        return commit_hash
+                except subprocess.CalledProcessError:
+                    continue
+
+        return None
+
+    except Exception:
+        return None
+
+
+def parse_hierarchical_tag(tag: str) -> Dict[str, Optional[str]]:
+    """Parse hierarchical tag into its components.
+
+    Parses tags in the format: <classifier-name>-v<X.X.X>-mlserver-<commit-hash>
+
+    Args:
+        tag: Full tag string to parse
+
+    Returns:
+        Dictionary with keys:
+        - classifier: Classifier name (e.g., "sentiment", "rfq-likelihood")
+        - version: Semantic version (e.g., "1.0.0")
+        - mlserver_commit: MLServer commit hash (e.g., "b5dff2a")
+        - format: "valid" if tag matches expected format, "invalid" otherwise
+
+    Examples:
+        >>> parse_hierarchical_tag("sentiment-v1.0.0-mlserver-b5dff2a")
+        {'classifier': 'sentiment', 'version': '1.0.0', 'mlserver_commit': 'b5dff2a', 'format': 'valid'}
+
+        >>> parse_hierarchical_tag("invalid-tag")
+        {'classifier': None, 'version': None, 'mlserver_commit': None, 'format': 'invalid'}
+    """
+    # Regex for new format: <name>-v<X.X.X>-mlserver-<hash>
+    # Classifier names can contain letters, numbers, underscores, hyphens
+    # Commit hashes are 7+ hex characters
+    pattern = r'^([a-z0-9_-]+)-v(\d+\.\d+\.\d+)-mlserver-([a-f0-9]{3,})$'
+    match = re.match(pattern, tag)
+
+    if match:
+        return {
+            "classifier": match.group(1),
+            "version": match.group(2),
+            "mlserver_commit": match.group(3),
+            "format": "valid"
+        }
+
+    # Tag doesn't match expected format
+    return {
+        "classifier": None,
+        "version": None,
+        "mlserver_commit": None,
+        "format": "invalid"
+    }
+
+
+def extract_classifier_name(name_or_tag: str) -> Optional[str]:
+    """Extract classifier name from either a simple name or full hierarchical tag.
+
+    This helper function allows CLI commands to accept both formats:
+    - Simple name: "sentiment"
+    - Full tag: "sentiment-v1.0.0-mlserver-b5dff2a"
+
+    Args:
+        name_or_tag: Either a classifier name or full hierarchical tag
+
+    Returns:
+        Classifier name, or None if tag format is invalid
+
+    Examples:
+        >>> extract_classifier_name("sentiment")
+        'sentiment'
+
+        >>> extract_classifier_name("sentiment-v1.0.0-mlserver-b5dff2a")
+        'sentiment'
+
+        >>> extract_classifier_name("rfq_likelihood_model")
+        'rfq_likelihood_model'
+    """
+    # First, try to parse as a full tag
+    parsed = parse_hierarchical_tag(name_or_tag)
+    if parsed["format"] == "valid":
+        return parsed["classifier"]
+
+    # Not a full tag, assume it's just a classifier name
+    # Validate it's a reasonable name (alphanumeric, underscore, hyphen)
+    if re.match(r'^[a-z0-9_-]+$', name_or_tag):
+        return name_or_tag
+
+    # Invalid format
+    return None
+
+
+def get_tag_commits(tag: str, project_path: str = ".") -> Dict[str, Optional[str]]:
+    """Get git commit hashes from a hierarchical tag.
+
+    Given a hierarchical tag, returns:
+    - The classifier repo commit that the tag points to
+    - The mlserver commit encoded in the tag
+
+    Args:
+        tag: Full hierarchical tag (e.g., "sentiment-v1.0.0-mlserver-b5dff2a")
+        project_path: Path to classifier project
+
+    Returns:
+        Dictionary with keys:
+        - classifier_commit: Git commit hash in classifier repo
+        - mlserver_commit: MLServer commit from tag
+        - tag_valid: True if tag exists and can be parsed
+
+    Examples:
+        >>> get_tag_commits("sentiment-v1.0.0-mlserver-b5dff2a", "/path/to/project")
+        {'classifier_commit': 'a1b2c3d', 'mlserver_commit': 'b5dff2a', 'tag_valid': True}
+    """
+    result = {
+        "classifier_commit": None,
+        "mlserver_commit": None,
+        "tag_valid": False
+    }
+
+    # Parse the tag to extract mlserver commit
+    parsed = parse_hierarchical_tag(tag)
+    if parsed["format"] != "valid":
+        return result
+
+    result["mlserver_commit"] = parsed["mlserver_commit"]
+
+    # Get the git commit that this tag points to
+    try:
+        cmd_result = subprocess.run(
+            ["git", "rev-list", "-n", "1", tag],
+            cwd=project_path,
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        commit_hash = cmd_result.stdout.strip()
+        if commit_hash:
+            # Get short hash (7 chars)
+            short_result = subprocess.run(
+                ["git", "rev-parse", "--short=7", commit_hash],
+                cwd=project_path,
+                capture_output=True,
+                text=True,
+                check=True
+            )
+            result["classifier_commit"] = short_result.stdout.strip()
+            result["tag_valid"] = True
+
+    except subprocess.CalledProcessError:
+        # Tag doesn't exist in repo
+        pass
+
+    return result
+
+
 class GitVersionManager:
     """Manage git-based versioning for ML models."""
 
@@ -22,8 +215,11 @@ class GitVersionManager:
     def get_current_version(self, classifier_name: Optional[str] = None) -> Optional[str]:
         """Get the current version from git tags.
 
+        Parses tags in the format: classifier-v1.0.0-mlserver-hash
+        Returns just the version part: 1.0.0
+
         Args:
-            classifier_name: If provided, looks for classifier-specific tags (e.g., 'sentiment-v1.0.0')
+            classifier_name: If provided, looks for classifier-specific tags (e.g., 'sentiment-v1.0.0-mlserver-b5dff2a')
         """
         try:
             if classifier_name:
@@ -41,9 +237,11 @@ class GitVersionManager:
                     tags = result.stdout.strip().split('\n')
                     if tags:
                         latest_tag = tags[0]
-                        # Extract version from classifier-v1.0.0 format
-                        version_part = latest_tag.split('-v', 1)[1] if '-v' in latest_tag else None
-                        return version_part
+                        # Parse new format: classifier-v1.0.0-mlserver-hash
+                        # Extract version using regex
+                        match = re.search(r'-v(\d+\.\d+\.\d+)', latest_tag)
+                        if match:
+                            return match.group(1)
                 return None
             else:
                 # Legacy: get any tag
@@ -57,7 +255,11 @@ class GitVersionManager:
 
                 if result.returncode == 0:
                     tag = result.stdout.strip()
-                    # Remove 'v' prefix if present
+                    # Try to extract version using regex
+                    match = re.search(r'-v(\d+\.\d+\.\d+)', tag)
+                    if match:
+                        return match.group(1)
+                    # Fallback: Remove 'v' prefix if present
                     return tag[1:] if tag.startswith('v') else tag
                 return None
 
@@ -177,19 +379,41 @@ class GitVersionManager:
         self,
         bump_type: Literal["major", "minor", "patch"],
         classifier_name: str,
-        message: Optional[str] = None
-    ) -> str:
-        """Create a new version tag for a specific classifier.
+        message: Optional[str] = None,
+        allow_missing_mlserver: bool = False
+    ) -> Dict[str, str]:
+        """Create a new version tag for a specific classifier with mlserver commit hash.
 
         Args:
             bump_type: Type of version bump
             classifier_name: Name of the classifier to tag
             message: Optional tag message
+            allow_missing_mlserver: If True, allow tagging even if mlserver commit cannot be determined (dev/testing only)
+
+        Returns:
+            Dict with keys: 'version', 'tag_name', 'mlserver_commit', 'previous_version'
+
+        Raises:
+            VersionControlError: If working directory is not clean or mlserver commit cannot be determined
         """
         # Check working directory is clean
         is_clean, error_msg = self.check_working_directory_clean()
         if not is_clean:
             raise VersionControlError(f"Cannot tag version: {error_msg}")
+
+        # Get mlserver commit hash
+        mlserver_commit = get_mlserver_commit_hash()
+        if not mlserver_commit:
+            if not allow_missing_mlserver:
+                raise VersionControlError(
+                    "Could not determine mlserver commit hash. "
+                    "Ensure mlserver-fastapi-wrapper is installed from a git repository. "
+                    "For development/testing, use --allow-missing-mlserver flag."
+                )
+            else:
+                # Use placeholder for development
+                mlserver_commit = "dev"
+                print("⚠️  Warning: Using 'dev' as mlserver commit (--allow-missing-mlserver enabled)")
 
         # Get current version for this classifier
         current_version = self.get_current_version(classifier_name)
@@ -211,9 +435,9 @@ class GitVersionManager:
             # No previous tags for this classifier
             new_version = "1.0.0" if bump_type == "major" else "0.1.0" if bump_type == "minor" else "0.0.1"
 
-        # Create hierarchical tag
-        tag_name = f"{classifier_name}-v{new_version}"
-        tag_message = message or f"Release {classifier_name} {new_version}"
+        # Create hierarchical tag with mlserver commit
+        tag_name = f"{classifier_name}-v{new_version}-mlserver-{mlserver_commit}"
+        tag_message = message or f"Release {classifier_name} {new_version} (mlserver {mlserver_commit})"
 
         try:
             # Create annotated tag
@@ -223,10 +447,12 @@ class GitVersionManager:
                 check=True
             )
 
-            print(f"✅ Created tag {tag_name}")
-            print(f"📝 {classifier_name} version bumped from {current_version or 'none'} to {new_version}")
-
-            return new_version
+            return {
+                'version': new_version,
+                'tag_name': tag_name,
+                'mlserver_commit': mlserver_commit,
+                'previous_version': current_version
+            }
 
         except subprocess.CalledProcessError as e:
             raise VersionControlError(f"Failed to create tag: {e}")
@@ -407,9 +633,15 @@ def get_version_for_push(
         tag_info = git_mgr.get_latest_tag_info(classifier_name)
         if tag_info["on_tagged_commit"] and tag_info["tag"]:
             tag = tag_info["tag"]
-            # Extract version from hierarchical tag if needed
-            if classifier_name and '-v' in tag:
-                version = tag.split('-v', 1)[1]
+            # Extract version from hierarchical tag using parser (Phase 2)
+            if classifier_name and '-mlserver-' in tag:
+                # Parse hierarchical tag format
+                parsed = parse_hierarchical_tag(tag)
+                if parsed["format"] == "valid":
+                    version = parsed["version"]
+                else:
+                    # Fallback for non-hierarchical tags
+                    version = tag.split('-v', 1)[1] if '-v' in tag else tag
             else:
                 version = tag[1:] if tag.startswith('v') else tag
             return version, f"git-tag ({tag})"

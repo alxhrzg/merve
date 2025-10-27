@@ -24,7 +24,11 @@ This index provides a comprehensive overview of all documentation available for 
 
 ### [CLI Reference](./cli-reference.md)
 - **Classic CLI** (`ml_server`): Traditional command interface
-- **Modern CLI** (`mlserver`): Typer-based rich interface
+- **Modern CLI** (`mlserver`): Typer-based rich interface with rich output
+- **Version Management**: Hierarchical tagging for complete reproducibility
+- **Tag Command**: Create semantic version tags with MLServer commit tracking
+- **Build Command**: Container builds with validation warnings
+- **Version Command**: Display version info with detailed flag
 - **Command Options**: Complete parameter documentation
 - **Environment Variables**: CLI overrides and defaults
 - **Examples**: Common usage patterns and workflows
@@ -41,17 +45,22 @@ This index provides a comprehensive overview of all documentation available for 
 ## 🚀 Implementation Guides
 
 ### [Deployment Guide](./deployment.md)
-- **Kubernetes Strategy**: Pod-based scaling patterns
-- **Container Workflow**: Building and pushing images
-- **Version Management**: Git tags and registry tagging
+- **Hierarchical Versioning**: Complete reproducibility with `<classifier>-v<X.X.X>-mlserver-<hash>` tags
+- **GitHub Actions Workflows**: CI/CD integration with automatic tag parsing
+- **Kubernetes Strategy**: Pod-based scaling patterns with version-specific deployments
+- **Container Workflow**: Building and pushing images with OCI-compliant labels
+- **Multi-Classifier Deployment**: Independent versioning and deployment per classifier
+- **Migration Path**: Upgrading from simple tags to hierarchical format
 - **Environment Configuration**: Production settings
 - **Monitoring Setup**: Prometheus and Grafana integration
 
 ### [Development Guide](./development.md)
 - **Local Setup**: Development environment configuration
 - **Testing Strategy**: Unit, integration, and load testing
+- **Version Management**: Creating hierarchical tags during development
+- **Reproducibility Testing**: Validating container builds from tags
 - **Code Structure**: Package organization and conventions
-- **Contributing**: Pull request guidelines
+- **Contributing**: Pull request guidelines with version tagging workflow
 - **Debugging**: Troubleshooting common issues
 
 ### [Examples Guide](./examples.md)
@@ -103,16 +112,23 @@ predictor:
 ### CLI Quick Commands
 ```bash
 # Serve with auto-detection
-ml_server serve
+mlserver serve
 
 # Serve specific classifier
-ml_server serve config.yaml --classifier model-name
+mlserver serve config.yaml --classifier model-name
 
-# Build container
-ml_server build --tag my-model:v1.0.0
+# Version management with hierarchical tags
+mlserver tag --classifier sentiment patch  # Create v1.0.1-mlserver-abc123
+mlserver tag                               # View status of all classifiers
+
+# Build container with version validation
+mlserver build --classifier sentiment-v1.0.1-mlserver-abc123
+
+# Version information
+mlserver version --detailed
 
 # AI-powered init
-ml_server ainit notebook.ipynb
+mlserver ainit notebook.ipynb
 ```
 
 ### API Quick Endpoints
@@ -132,6 +148,9 @@ ml_server ainit notebook.ipynb
 - **"I want to write a predictor"** → [Examples Guide](./examples.md)
 - **"I want to monitor performance"** → [Observability Features](./observability.md)
 - **"I want to use multiple models"** → [Multi-Classifier Support](./multi-classifier.md)
+- **"I want to version my classifier"** → [CLI Reference > Tag Command](./cli-reference.md#tag---version-tagging--reproducibility)
+- **"I want reproducible builds"** → [Deployment Guide > Hierarchical Versioning](./deployment.md#ci-cd-workflow-adaptations)
+- **"I want to set up CI/CD"** → [Deployment Guide > GitHub Actions](./deployment.md#github-actions-workflows)
 
 ### By Component
 - **Server** → [Architecture Overview](./architecture.md)
@@ -158,5 +177,5 @@ This documentation is continuously updated as the codebase evolves. When making 
 4. Verify links remain valid
 5. Update CLAUDE.md references
 
-**Last Updated**: 2025-01-16
-**Version**: 0.2.0
+**Last Updated**: 2025-10-27
+**Version**: 0.3.0 (Hierarchical Versioning Release)

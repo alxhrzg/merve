@@ -96,16 +96,53 @@ All endpoints should include comprehensive metadata:
 
 ## CI/CD Workflow Adaptations
 
-### 1. Git Tagging Strategy
-For multi-classifier repos, use hierarchical tags:
-```bash
-# Format: <classifier-name>-v<version>
-git tag sentiment-v2.3.1
-git tag intent-v1.0.0
-git tag ner-v3.1.0
+### 1. Git Tagging Strategy (Enhanced with MLServer Tracking)
 
-# Or use directories in tags
-git tag classifiers/sentiment/v2.3.1
+For multi-classifier repos, use **hierarchical tags with MLServer commit tracking**:
+
+#### Tag Format
+```
+<classifier-name>-v<X.X.X>-mlserver-<commit-hash>
+```
+
+Example: `sentiment-v2.3.1-mlserver-b5dff2a`
+
+This format provides:
+- **Classifier version**: Semantic versioning for classifier code
+- **MLServer version**: Tool/framework commit for reproducibility
+- **Complete traceability**: Exact state of both classifier and MLServer
+
+#### Creating Tags
+
+Use the CLI tool (automatically includes MLServer commit):
+```bash
+# Create tags using mlserver CLI
+mlserver tag --classifier sentiment patch   # v2.3.1
+mlserver tag --classifier intent minor      # v1.1.0
+mlserver tag --classifier ner major         # v3.0.0
+
+# Tags created: sentiment-v2.3.1-mlserver-b5dff2a
+#                intent-v1.1.0-mlserver-b5dff2a
+#                ner-v3.0.0-mlserver-b5dff2a
+
+# Push tags to remote
+git push --tags
+```
+
+#### View Tag Status
+```bash
+# Show status of all classifiers
+mlserver tag
+
+# Output:
+#                    🏷️  Classifier Version Status
+# ┏━━━━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━━━━━━━━━━┓
+# ┃ Classifier ┃ Version ┃ MLServer  ┃ Status ┃ Action Required ┃
+# ┡━━━━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━━━━━━━━━━┩
+# │ sentiment  │ 2.3.1   │ b5dff2a ✓ │ Ready  │ -               │
+# │ intent     │ 1.1.0   │ b5dff2a ✓ │ Ready  │ -               │
+# │ ner        │ 3.0.0   │ b5dff2a ✓ │ Ready  │ -               │
+# └────────────┴─────────┴───────────┴────────┴─────────────────┘
 ```
 
 ### 2. Build Script for Multi-Classifier
@@ -121,42 +158,187 @@ cd $CLASSIFIER_PATH
 ml_server build --tag "${REPO_NAME}-${CLASSIFIER_NAME}:${VERSION}"
 ```
 
-### 3. GitHub Actions Workflow
-`.github/workflows/build-deploy.yml`:
+### 3. GitHub Actions Workflows
+
+#### Option A: Trigger on Git Tag Push (Recommended)
+
+`.github/workflows/build-on-tag.yml`:
 ```yaml
-name: Build and Deploy Classifier
+name: Build and Deploy on Tag
+
+on:
+  push:
+    tags:
+      - '*-v*-mlserver-*'  # Match hierarchical tag format
+
+jobs:
+  parse-and-build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Parse Hierarchical Tag
+        id: parse
+        run: |
+          TAG_NAME="${GITHUB_REF#refs/tags/}"
+          echo "Full tag: $TAG_NAME"
+
+          # Parse: sentiment-v2.3.1-mlserver-b5dff2a
+          CLASSIFIER=$(echo $TAG_NAME | sed -E 's/^([a-z0-9_-]+)-v.*/\1/')
+          VERSION=$(echo $TAG_NAME | sed -E 's/^[a-z0-9_-]+-v([0-9]+\.[0-9]+\.[0-9]+)-.*/\1/')
+          MLSERVER=$(echo $TAG_NAME | sed -E 's/.*-mlserver-([a-f0-9]+)$/\1/')
+
+          echo "classifier=$CLASSIFIER" >> $GITHUB_OUTPUT
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "mlserver_commit=$MLSERVER" >> $GITHUB_OUTPUT
+
+          echo "Parsed: classifier=$CLASSIFIER, version=$VERSION, mlserver=$MLSERVER"
+
+      - uses: actions/checkout@v3
+        with:
+          ref: ${{ github.ref }}
+          fetch-depth: 0  # Fetch all history for git operations
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Install MLServer
+        run: |
+          pip install -e .
+
+      - name: Validate Tag Matches Code
+        run: |
+          # Verify current code matches tag
+          mlserver build --classifier ${{ github.ref_name }} --dry-run || true
+
+      - name: Build Container
+        run: |
+          # Build with full hierarchical tag for validation
+          mlserver build --classifier ${{ github.ref_name }}
+
+      - name: Login to Container Registry
+        uses: docker/login-action@v2
+        with:
+          registry: ${{ secrets.REGISTRY_URL }}
+          username: ${{ secrets.REGISTRY_USERNAME }}
+          password: ${{ secrets.REGISTRY_PASSWORD }}
+
+      - name: Tag and Push Container
+        run: |
+          CLASSIFIER="${{ steps.parse.outputs.classifier }}"
+          VERSION="${{ steps.parse.outputs.version }}"
+          MLSERVER="${{ steps.parse.outputs.mlserver_commit }}"
+
+          # Tag with version
+          docker tag ${CLASSIFIER}:latest ${{ secrets.REGISTRY_URL }}/${CLASSIFIER}:${VERSION}
+          docker tag ${CLASSIFIER}:latest ${{ secrets.REGISTRY_URL }}/${CLASSIFIER}:${VERSION}-mlserver-${MLSERVER}
+          docker tag ${CLASSIFIER}:latest ${{ secrets.REGISTRY_URL }}/${CLASSIFIER}:latest
+
+          # Push all tags
+          docker push ${{ secrets.REGISTRY_URL }}/${CLASSIFIER}:${VERSION}
+          docker push ${{ secrets.REGISTRY_URL }}/${CLASSIFIER}:${VERSION}-mlserver-${MLSERVER}
+          docker push ${{ secrets.REGISTRY_URL }}/${CLASSIFIER}:latest
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          name: "${{ steps.parse.outputs.classifier }} v${{ steps.parse.outputs.version }}"
+          body: |
+            ## ${{ steps.parse.outputs.classifier }} v${{ steps.parse.outputs.version }}
+
+            **Classifier Commit**: ${{ github.sha }}
+            **MLServer Commit**: ${{ steps.parse.outputs.mlserver_commit }}
+            **Container**: `${{ secrets.REGISTRY_URL }}/${{ steps.parse.outputs.classifier }}:${{ steps.parse.outputs.version }}`
+
+            ### Reproducibility
+            ```bash
+            git checkout ${{ github.ref_name }}
+            mlserver build --classifier ${{ steps.parse.outputs.classifier }}
+            ```
+```
+
+#### Option B: Manual Workflow Dispatch
+
+`.github/workflows/build-dispatch.yml`:
+```yaml
+name: Manual Build and Deploy
 
 on:
   workflow_dispatch:
     inputs:
-      classifier:
-        description: 'Classifier to build'
+      full_tag:
+        description: 'Full hierarchical tag (e.g., sentiment-v2.3.1-mlserver-b5dff2a)'
         required: true
-        type: choice
-        options:
-          - sentiment
-          - intent
-          - ner
-      version_tag:
-        description: 'Git tag for version'
-        required: true
+        type: string
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
+      - name: Validate Tag Format
+        run: |
+          TAG="${{ github.event.inputs.full_tag }}"
+          if ! echo "$TAG" | grep -qE '^[a-z0-9_-]+-v[0-9]+\.[0-9]+\.[0-9]+-mlserver-[a-f0-9]+$'; then
+            echo "❌ Invalid tag format"
+            echo "Expected: <classifier>-v<X.X.X>-mlserver-<hash>"
+            echo "Got: $TAG"
+            exit 1
+          fi
+          echo "✅ Tag format valid"
+
       - uses: actions/checkout@v3
         with:
-          ref: ${{ github.event.inputs.version_tag }}
+          ref: ${{ github.event.inputs.full_tag }}
 
-      - name: Build Classifier
-        run: |
-          cd classifiers/${{ github.event.inputs.classifier }}
-          ml_server build
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
 
-      - name: Push to Registry
+      - name: Install and Build
         run: |
-          ml_server push --registry ${{ secrets.REGISTRY_URL }}
+          pip install -e .
+          mlserver build --classifier ${{ github.event.inputs.full_tag }} --force
+```
+
+#### Option C: Pull Request Validation
+
+`.github/workflows/validate-pr.yml`:
+```yaml
+name: Validate PR
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Install MLServer
+        run: pip install -e ".[test]"
+
+      - name: Check Tag Status
+        run: |
+          # Show which classifiers need tagging
+          mlserver tag || true
+
+      - name: Run Tests
+        run: pytest tests/
+
+      - name: Validate Configs
+        run: |
+          # Validate all classifier configs
+          for config in classifiers/*/mlserver.yaml; do
+            mlserver validate $config
+          done
 ```
 
 ### 4. Kubernetes Deployment
@@ -239,7 +421,7 @@ spec:
 ```bash
 # Work on specific classifier
 cd classifiers/sentiment
-ml_server serve mlserver.yaml
+mlserver serve mlserver.yaml
 
 # Test endpoint
 curl http://localhost:8000/sentiment-analyzer/predict
@@ -247,74 +429,170 @@ curl http://localhost:8000/sentiment-analyzer/predict
 
 ### 2. Building Multiple Classifiers
 ```bash
-# Build all classifiers in a repository
+# Build all classifiers in a repository with hierarchical tags
 for classifier in classifiers/*/; do
-  cd $classifier
-  ml_server build --tag-prefix "${REPO_NAME}-$(basename $classifier)"
-  cd ../..
+  classifier_name=$(basename $classifier)
+
+  # Create hierarchical tag (automatically includes MLServer commit)
+  mlserver tag --classifier $classifier_name patch
+
+  # Build with the created tag
+  latest_tag=$(git describe --tags --match "${classifier_name}-v*" --abbrev=0)
+  mlserver build --classifier $latest_tag
 done
 ```
 
-### 3. Version Bumping
-Create `scripts/bump_version.sh`:
+### 3. Version Bumping with Hierarchical Tags
+
+**Recommended**: Use the `mlserver tag` command for automatic hierarchical tagging:
+
+```bash
+# Patch release (bug fixes) - auto-increments version and includes MLServer commit
+mlserver tag --classifier sentiment patch
+
+# Output:
+# ✓ Created tag: sentiment-v1.0.3-mlserver-b5dff2a
+#
+#   📝 Version: 1.0.2 → 1.0.3 (patch bump)
+#   🔧 MLServer commit: b5dff2a
+#   📦 Classifier commit: c5f9997
+
+# Minor release (new features)
+mlserver tag --classifier intent minor
+
+# Major release (breaking changes)
+mlserver tag --classifier fraud-detection major
+
+# Push tags to remote
+git push --tags
+```
+
+**Manual Alternative** (not recommended):
+
+If you need custom scripting, create `scripts/bump_version.sh`:
 ```bash
 #!/bin/bash
 CLASSIFIER=$1
 VERSION_TYPE=$2  # major, minor, patch
 
-cd classifiers/$CLASSIFIER
-# Update version in mlserver.yaml
-python -c "
-import yaml
-with open('mlserver.yaml', 'r') as f:
-    config = yaml.safe_load(f)
+# Use the mlserver CLI command instead of manual tag creation
+mlserver tag --classifier $CLASSIFIER $VERSION_TYPE
 
-# Bump version logic here
-version_parts = config['classifier']['version'].split('.')
-if '${VERSION_TYPE}' == 'patch':
-    version_parts[2] = str(int(version_parts[2]) + 1)
-# ... more logic
-
-config['classifier']['version'] = '.'.join(version_parts)
-
-with open('mlserver.yaml', 'w') as f:
-    yaml.dump(config, f)
-"
-
-# Create git tag
-git tag "${CLASSIFIER}-v$(grep version mlserver.yaml | head -1 | cut -d' ' -f2)"
+# Push to remote
+git push --tags
 ```
 
-## Migration Path
+**Tag Status Overview**:
+```bash
+# View status of all classifiers in repository
+mlserver tag
 
-### Phase 1: Update Configuration (Week 1)
-1. Modify `get_base_path()` to support optional versioning
-2. Add configuration flag `include_version_in_url`
-3. Enhance metadata responses
+# Shows table with current versions, MLServer commits, and recommended actions
+```
 
-### Phase 2: Multi-Classifier Support (Week 2)
-1. Update CLI to support `--classifier-path` argument
-2. Modify build command to handle subdirectories
-3. Create template for multi-classifier repos
+## Migration Path for Existing Projects
 
-### Phase 3: CI/CD Updates (Week 3)
-1. Update GitHub Actions workflows
-2. Implement hierarchical tagging
-3. Test with pilot project
+If you have existing projects using older tagging formats, follow this migration guide:
 
-### Phase 4: Production Rollout (Week 4)
-1. Deploy first multi-classifier repository
-2. Monitor and collect metrics
-3. Document lessons learned
+### Step 1: Understand Your Current Tags (5 minutes)
+```bash
+# List existing tags
+git tag -l
 
-## Benefits of This Approach
+# Existing tags might look like:
+# v1.0.0
+# v1.0.1
+# sentiment-v1.0.0
+```
 
-1. **Backward Compatible**: Existing single-classifier repos continue to work
-2. **Flexible Versioning**: Choose between versioned and versionless URLs
-3. **Multi-Classifier Support**: Single repo can host multiple related classifiers
-4. **Clear Deployment Path**: Each version is a separate immutable deployment
-5. **Simplified Client Integration**: Clients use stable URLs, versions tracked via metadata
-6. **Kubernetes Native**: Leverages K8s deployment strategies and service mesh
+### Step 2: Update to Hierarchical Tags (10 minutes)
+```bash
+# For single-classifier repos
+# Old format: v1.0.0
+# New format: <classifier-name>-v1.0.0-mlserver-<hash>
+
+# Create first hierarchical tag from current version
+mlserver tag --classifier <your-classifier-name> patch
+
+# Example output:
+# ✓ Created tag: sentiment-v1.0.1-mlserver-b5dff2a
+```
+
+### Step 3: Update CI/CD Workflows (30 minutes)
+1. Update GitHub Actions to use new tag format (see workflows above)
+2. Change tag triggers: `tags: ['*-v*-mlserver-*']`
+3. Add tag parsing logic to extract classifier, version, and MLServer commit
+
+### Step 4: Update Container Build Process (15 minutes)
+```bash
+# Old command:
+# docker build -t my-classifier:v1.0.0 .
+
+# New command with hierarchical tag:
+mlserver build --classifier sentiment-v1.0.1-mlserver-b5dff2a
+
+# Or let MLServer detect the latest tag automatically:
+mlserver build --classifier sentiment
+```
+
+### Step 5: Validate Reproducibility (10 minutes)
+```bash
+# Check that your tags include full reproducibility info
+git show sentiment-v1.0.1-mlserver-b5dff2a
+
+# Verify you can rebuild from any historical tag
+git checkout sentiment-v1.0.1-mlserver-b5dff2a
+mlserver build --classifier sentiment-v1.0.1-mlserver-b5dff2a
+```
+
+### Backward Compatibility Notes
+
+- **Existing containers**: Continue to work without changes
+- **Old tags**: Remain in git history, no need to delete
+- **Gradual migration**: New releases use hierarchical tags, old ones remain unchanged
+- **API endpoints**: No changes required (versionless design recommended)
+
+## Benefits of Hierarchical Versioning
+
+1. **Complete Reproducibility**: Tags capture both classifier code AND MLServer tool versions
+   - Example: `sentiment-v2.3.1-mlserver-b5dff2a` contains exact commits for both
+   - Can rebuild identical container months or years later
+   - No dependency on external registries for version tracking
+
+2. **Multi-Classifier Support**: Single repository can host multiple related classifiers
+   - Each classifier has independent versioning
+   - Shared utilities and dependencies across classifiers
+   - Centralized repository management
+
+3. **Backward Compatible**: Existing single-classifier repos continue to work
+   - Gradual migration path
+   - No breaking changes to existing deployments
+   - Old tags remain valid
+
+4. **CI/CD Integration**: Seamless GitHub Actions workflow
+   - Automatic builds on tag push
+   - Tag parsing extracts classifier, version, and MLServer commit
+   - Validation ensures code matches tag specifications
+
+5. **Clear Deployment Path**: Each version is a separate immutable deployment
+   - Kubernetes deployments per version
+   - Easy rollback to any previous version
+   - Canary and blue-green deployment support
+
+6. **Simplified Client Integration**: Clients use stable URLs, versions tracked via metadata
+   - Versionless endpoints: `/sentiment-analyzer/predict`
+   - Version information in response metadata
+   - No client code changes for version updates
+
+7. **Developer Experience**: Simple CLI commands handle complexity
+   - `mlserver tag --classifier sentiment patch` - one command for version bump
+   - Automatic MLServer commit detection
+   - Visual status table for all classifiers
+
+8. **Audit Trail**: Complete version history with traceability
+   - Git tags provide permanent version markers
+   - Container labels include all version metadata
+   - Prometheus metrics track version usage
 
 ## Example Client Integration
 
@@ -379,10 +657,68 @@ classifier_version_info.labels(
 3. **RBAC**: Different teams can manage different classifiers in same repo
 4. **Secrets Management**: Model artifacts encrypted, credentials in K8s secrets
 
-## Next Steps
+## Next Steps for Implementation
 
-1. Review and approve design decisions
-2. Implement configuration changes for versionless URLs
-3. Create multi-classifier template repository
-4. Update CI/CD pipelines
-5. Plan pilot migration
+### For New Projects
+
+1. **Set up classifier configuration**
+   - Create `mlserver.yaml` with classifier metadata
+   - Define predictor class and model artifacts
+
+2. **Initialize version control**
+   ```bash
+   git init
+   git add .
+   git commit -m "Initial commit"
+
+   # Create first hierarchical tag
+   mlserver tag --classifier <your-classifier-name> patch
+   ```
+
+3. **Set up CI/CD pipeline**
+   - Copy GitHub Actions workflow from examples above
+   - Configure container registry credentials
+   - Test with first tag push
+
+4. **Deploy to Kubernetes**
+   - Use deployment manifests from this guide
+   - Configure resource limits based on model requirements
+   - Set up monitoring and observability
+
+### For Existing Projects
+
+1. **Migrate to hierarchical tags** (see Migration Path section above)
+2. **Update CI/CD workflows** to handle new tag format
+3. **Test reproducibility** with historical builds
+4. **Update documentation** for your team
+
+### For Multi-Classifier Repositories
+
+1. **Organize repository structure**
+   ```
+   classifiers/
+   ├── classifier-a/
+   │   ├── mlserver.yaml
+   │   └── predictor.py
+   └── classifier-b/
+       ├── mlserver.yaml
+       └── predictor.py
+   ```
+
+2. **Tag each classifier independently**
+   ```bash
+   mlserver tag --classifier classifier-a patch
+   mlserver tag --classifier classifier-b minor
+   ```
+
+3. **Build and deploy separately**
+   ```bash
+   mlserver build --classifier classifier-a-v1.0.1-mlserver-b5dff2a
+   mlserver build --classifier classifier-b-v1.1.0-mlserver-b5dff2a
+   ```
+
+### Additional Resources
+
+- **CLI Reference**: See `docs/cli-reference.md` for detailed command documentation
+- **Examples**: Check `examples/` directory for sample configurations
+- **Testing**: Review `TEST_IMPROVEMENT_BACKLOG.md` for test coverage details
