@@ -1,6 +1,6 @@
 # mlserver-fastapi-wrapper
 
-Wrap any Python predictor class into a production-ready FastAPI inference API using a YAML configuration file. No boilerplate, no framework lock-in.
+Wrap any Python predictor class into a production-ready FastAPI inference API using a YAML configuration file. No boilerplate, no framework lock-in!
 
 ## What This Does
 
