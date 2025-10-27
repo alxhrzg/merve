@@ -76,5 +76,8 @@ htmlcov/
 # Auto-generated version file (created by setuptools-scm)
 mlserver/_version.py
 
+# Root-level documentation files (except CLAUDE.md)
+/*.md
+!CLAUDE.md
 
 
