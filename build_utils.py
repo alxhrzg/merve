@@ -7,7 +7,7 @@ This is called during package build (setup.py, poetry build, etc.)
 import subprocess
 import os
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
 
 
 def capture_git_info():
@@ -84,9 +84,10 @@ def write_version_info():
     git_info = capture_git_info()
 
     # Generate the version info file
+    now_utc = datetime.now(timezone.utc).isoformat()
     version_file_content = f'''# Auto-generated version information
 # This file is created during package build to embed git information
-# Generated at: {datetime.utcnow().isoformat()}Z
+# Generated at: {now_utc}Z
 # DO NOT EDIT MANUALLY - it will be overwritten during build
 
 VERSION = "{version}"
@@ -94,7 +95,7 @@ GIT_COMMIT = "{git_info['commit'] or ''}"
 GIT_TAG = "{git_info['tag'] or ''}"
 GIT_BRANCH = "{git_info['branch'] or ''}"
 GIT_DIRTY = {git_info['dirty']}
-BUILD_TIME = "{datetime.utcnow().isoformat()}Z"
+BUILD_TIME = "{now_utc}Z"
 
 # This file is populated during package build
 # These values are embedded at build time and available at runtime
