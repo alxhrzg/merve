@@ -172,12 +172,15 @@ class ConfigurationValidValidator(Validator):
             description="Verify mlserver.yaml is valid"
         )
 
-    def validate(self, project_path: str = ".", **kwargs) -> ValidationResult:
+    def validate(self, project_path: str = ".", classifier_name: Optional[str] = None, **kwargs) -> ValidationResult:
         """
         Check if mlserver.yaml exists and is valid.
 
+        Supports both single-classifier and multi-classifier configurations.
+
         Args:
             project_path: Path to project
+            classifier_name: Classifier name (for multi-classifier configs)
 
         Returns:
             ValidationResult indicating if config is valid
@@ -193,14 +196,37 @@ class ConfigurationValidValidator(Validator):
 
         try:
             from .config import AppConfig
+            from .multi_classifier import detect_multi_classifier_config, extract_single_classifier_config, load_multi_classifier_config
             import yaml
 
             with open(mlserver_yaml, 'r') as f:
                 raw_config = yaml.safe_load(f)
 
-            AppConfig.model_validate(raw_config)
+            # Check if this is a multi-classifier config
+            if detect_multi_classifier_config(str(mlserver_yaml)):
+                # Multi-classifier format
+                multi_config = load_multi_classifier_config(str(mlserver_yaml))
 
-            return ValidationResult(passed=True)
+                # If classifier_name provided, validate that specific classifier
+                if classifier_name:
+                    try:
+                        # Extract and validate the specific classifier config
+                        single_config = extract_single_classifier_config(multi_config, classifier_name)
+                        # Validation passed if we got here
+                        return ValidationResult(passed=True)
+                    except (ValueError, KeyError) as e:
+                        return ValidationResult(
+                            passed=False,
+                            error_message=f"Classifier '{classifier_name}' not found or invalid in multi-classifier config: {str(e)}",
+                            details={"solution": "Check classifier name or run 'mlserver init' to recreate configuration"}
+                        )
+                else:
+                    # No classifier specified - just validate the multi-config structure
+                    return ValidationResult(passed=True)
+            else:
+                # Single-classifier format
+                AppConfig.model_validate(raw_config)
+                return ValidationResult(passed=True)
 
         except Exception as e:
             return ValidationResult(

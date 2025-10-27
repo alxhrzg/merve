@@ -417,11 +417,23 @@ def check_project_files(
         with open(mlserver_yaml, 'r') as f:
             config = yaml.safe_load(f)
 
-        predictor_module = config.get('predictor', {}).get('module')
-        if predictor_module:
-            predictor_file = project_path / f"{predictor_module}.py"
-            if not predictor_file.exists():
-                missing_files.append(f"{predictor_module}.py (predictor file)")
+        # Check if multi-classifier config
+        if 'classifiers' in config:
+            # Multi-classifier format
+            if classifier_name and classifier_name in config['classifiers']:
+                predictor_module = config['classifiers'][classifier_name].get('predictor', {}).get('module')
+                if predictor_module:
+                    predictor_file = project_path / f"{predictor_module}.py"
+                    if not predictor_file.exists():
+                        missing_files.append(f"{predictor_module}.py (predictor file)")
+            # For multi-classifier, we don't fail if no classifier_name provided
+        else:
+            # Single-classifier format
+            predictor_module = config.get('predictor', {}).get('module')
+            if predictor_module:
+                predictor_file = project_path / f"{predictor_module}.py"
+                if not predictor_file.exists():
+                    missing_files.append(f"{predictor_module}.py (predictor file)")
     except Exception:
         # If we can't parse, just warn about checking manually
         pass
