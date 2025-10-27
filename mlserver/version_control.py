@@ -26,7 +26,15 @@ def get_mlserver_commit_hash() -> Optional[str]:
         7-character short commit hash, or None if not from git
     """
     try:
-        # Get the mlserver package location
+        # First, try to read from _version_info.py (embedded at build time)
+        try:
+            from mlserver import _version_info
+            if _version_info.GIT_COMMIT:
+                return _version_info.GIT_COMMIT[:7]  # Ensure 7 characters
+        except (ImportError, AttributeError):
+            pass
+
+        # Fallback: Try to find git repository for editable installs
         import mlserver
         mlserver_file = Path(mlserver.__file__)
 
