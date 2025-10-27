@@ -348,7 +348,7 @@ def version(
                         "install_type": install_type
                     }
                 }
-                rprint(json.dumps(mlserver_info, indent=2))
+                print(json.dumps(mlserver_info, indent=2))
             else:
                 console.print("[yellow]ℹ[/yellow] No classifier project found in current directory")
                 console.print()
@@ -383,7 +383,7 @@ def version(
                 "commit": mlserver_commit,
                 "install_location": str(Path(mlserver_module.__file__).parent)
             }
-        rprint(json.dumps(version_info, indent=2))
+        print(json.dumps(version_info, indent=2))
     else:
         # Create a nice table for version info
         table = Table(title="📦 Version Information", show_header=False, title_style="bold cyan")
