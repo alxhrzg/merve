@@ -4,6 +4,15 @@ This is a Python project for `mlserver-fastapi-wrapper` - a tool that wraps Pyth
 
 For testing - consider ../test-installation, which contains a self-contained example and the corresponding test-scripts. You may read- and write to this folder!
 
+## Git Commit Guidelines
+
+**IMPORTANT**: When creating git commits, do NOT include:
+- ❌ "Generated with [Claude Code]" lines
+- ❌ "Co-Authored-By: Claude" lines
+- ❌ Emoji markers (🤖) indicating AI assistance
+
+Keep commit messages clean and professional, focusing on what changed and why, without meta-commentary about how the code was created.
+
 ## Project Structure
 - `mlserver/` - Main package code (CLI, server, adapters, metrics)
 - `examples/` - Example configurations and usage
