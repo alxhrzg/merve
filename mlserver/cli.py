@@ -840,28 +840,48 @@ def tag(
             console.print("Use [cyan]--classifier <name>[/cyan] to specify the classifier")
             raise typer.Exit(1)
 
-        # Check that all required files exist
-        from .init_project import check_project_files
-        files_ok, missing_files = check_project_files(path, classifier)
+        # Run validation suite for tagging
+        from .validation import get_tag_validation_suite
 
-        if not files_ok:
-            console.print("[red]✗[/red] Cannot create tag: Required files are missing", style="bold red")
+        validation_suite = get_tag_validation_suite()
+        all_passed, results = validation_suite.validate(
+            project_path=path,
+            classifier_name=classifier
+        )
+
+        if not all_passed:
+            console.print("[red]✗[/red] Cannot create tag: Validation failed", style="bold red")
             console.print()
-            console.print("[yellow]Missing files:[/yellow]")
-            for missing_file in missing_files:
-                console.print(f"  [red]✗[/red] {missing_file}")
-            console.print()
-            console.print("[cyan]Solution:[/cyan]")
-            console.print("  Run [cyan]mlserver init[/cyan] to create all required files")
-            console.print("  Or create the missing files manually")
+
+            # Display all validation failures
+            for result in results:
+                if not result.passed:
+                    console.print(f"[red]✗[/red] {result.error_message}")
+
+                    # Show details if available
+                    if result.details:
+                        if "missing_files" in result.details:
+                            console.print()
+                            console.print("[yellow]Missing files:[/yellow]")
+                            for missing_file in result.details["missing_files"]:
+                                console.print(f"  [red]✗[/red] {missing_file}")
+
+                        if "solution" in result.details:
+                            console.print()
+                            console.print("[cyan]Solution:[/cyan]")
+                            console.print(f"  {result.details['solution']}")
+
+                    console.print()
+
             raise typer.Exit(1)
 
-        # Check working directory status
-        is_clean, error_msg = git_mgr.check_working_directory_clean()
-        if not is_clean:
-            console.print(f"[red]✗[/red] Cannot tag version: {error_msg}", style="bold red")
-            console.print("[yellow]→[/yellow] Commit your changes first with: [cyan]git add . && git commit -m 'message'[/cyan]")
-            raise typer.Exit(1)
+        # Show any warnings (non-blocking)
+        for result in results:
+            if result.warnings:
+                for warning in result.warnings:
+                    console.print(f"[yellow]⚠[/yellow] {warning}")
+                    if result.details and "solution" in result.details:
+                        console.print(f"  [dim]{result.details['solution']}[/dim]")
 
         # Create the tag
         tag_info = git_mgr.tag_version(bump_type.value, classifier, message, allow_missing_mlserver)
