@@ -366,7 +366,12 @@ class GitVersionManager:
             }
 
     def check_working_directory_clean(self) -> Tuple[bool, Optional[str]]:
-        """Check if working directory is clean."""
+        """
+        Check if working directory has uncommitted changes to tracked files.
+
+        Note: Untracked files are allowed and will not fail this check.
+        Only uncommitted changes to tracked files (modified, staged, deleted) will fail.
+        """
         try:
             result = subprocess.run(
                 ["git", "status", "--porcelain"],
@@ -377,7 +382,17 @@ class GitVersionManager:
             )
 
             if result.stdout.strip():
-                return False, "Working directory has uncommitted changes"
+                # Filter out untracked files (??) - they're allowed
+                # Only fail on actual uncommitted changes to tracked files
+                lines = result.stdout.strip().split('\n')
+                uncommitted_changes = [
+                    line for line in lines
+                    if line and not line.startswith('??')
+                ]
+
+                if uncommitted_changes:
+                    return False, "Working directory has uncommitted changes"
+
             return True, None
 
         except subprocess.CalledProcessError as e:

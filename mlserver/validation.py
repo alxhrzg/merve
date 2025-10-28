@@ -85,12 +85,15 @@ class ProjectInitializedValidator(Validator):
 
 
 class GitWorkingDirectoryCleanValidator(Validator):
-    """Validates that git working directory has no uncommitted changes."""
+    """Validates that git working directory has no uncommitted changes to tracked files.
+
+    Note: Untracked files are allowed and will not fail validation.
+    """
 
     def __init__(self):
         super().__init__(
             name="git_working_directory_clean",
-            description="Verify no uncommitted changes in git"
+            description="Verify no uncommitted changes to tracked files (untracked files are allowed)"
         )
 
     def validate(self, project_path: str = ".", **kwargs) -> ValidationResult:
