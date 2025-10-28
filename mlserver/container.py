@@ -629,25 +629,6 @@ Dockerfile
     return dockerignore_content
 
 
-def _escape_docker_path(path: str) -> str:
-    """
-    Escape special characters in Docker COPY paths.
-
-    Docker's COPY command uses glob patterns, so special characters like
-    square brackets need to be escaped.
-
-    Args:
-        path: File or directory path
-
-    Returns:
-        Escaped path safe for use in Docker COPY commands
-    """
-    # Escape square brackets which are special in glob patterns
-    path = path.replace('[', r'\[').replace(']', r'\]')
-    # Could add more escaping here if needed (e.g., *, ?, etc.)
-    return path
-
-
 def generate_dockerfile(project_path: str, config: AppConfig,
                        required_files: List[str], base_image: str = None,
                        has_wheel: bool = False, needs_git: bool = False,
@@ -697,15 +678,14 @@ def generate_dockerfile(project_path: str, config: AppConfig,
             # File in root
             files_to_copy.append(file_path)
 
-    # Add copy commands for directories (use relative paths with escaped special chars)
+    # Add copy commands for directories
+    # Note: Square brackets and other special chars are LITERAL in COPY, not glob patterns
     for dir_name in sorted(dirs_to_copy):
-        escaped_dir = _escape_docker_path(dir_name)
-        copy_commands.append(f"COPY {escaped_dir}/ ./{escaped_dir}/")
+        copy_commands.append(f"COPY {dir_name}/ ./{dir_name}/")
 
-    # Add copy commands for individual files (with escaped special chars)
+    # Add copy commands for individual files
     if files_to_copy:
-        escaped_files = [_escape_docker_path(f) for f in files_to_copy]
-        file_list = " ".join(escaped_files)
+        file_list = " ".join(files_to_copy)
         copy_commands.append(f"COPY {file_list} ./")
 
     copy_section = "\n".join(copy_commands) if copy_commands else "COPY . ."
