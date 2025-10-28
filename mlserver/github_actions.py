@@ -397,7 +397,7 @@ jobs:
           else
             # GHCR configuration (default)
             REGISTRY_URL="ghcr.io"
-            OWNER_LOWER="$(echo "${{{{GITHUB_REPOSITORY_OWNER}}}}" | tr '[:upper:]' '[:lower:]')"
+            OWNER_LOWER="$(echo "${{{{ github.repository_owner }}}}" | tr '[:upper:]' '[:lower:]')"
             IMAGE_BASE="${{OWNER_LOWER}}/{repo_name}-${{CLASSIFIER}}"
             echo "Using GHCR registry: $REGISTRY_URL"
           fi
