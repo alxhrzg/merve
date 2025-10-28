@@ -1256,6 +1256,11 @@ def build_container(
         print("Docker build output:")
         print("="*60)
 
+        # Disable BuildKit to avoid glob pattern issues with special characters (e.g., square brackets)
+        # BuildKit treats [brackets] as character classes, causing errors with paths like "name[text]"
+        build_env = os.environ.copy()
+        build_env['DOCKER_BUILDKIT'] = '0'
+
         process = subprocess.Popen(
             build_cmd,
             cwd=project_path,
@@ -1263,7 +1268,8 @@ def build_container(
             stderr=subprocess.STDOUT,
             text=True,
             bufsize=1,  # Line buffered
-            universal_newlines=True
+            universal_newlines=True,
+            env=build_env
         )
 
         # Stream output in real-time
