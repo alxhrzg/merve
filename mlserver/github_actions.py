@@ -609,6 +609,7 @@ git push
         files_created["readme"] = str(readme_file.relative_to(project_path))
 
     # Build registry-specific instructions
+    registry_type = registry_config.get('type', 'ghcr') if registry_config else 'ghcr'
     if registry_type == 'ecr':
         registry_instructions = """
 Registry: AWS ECR
