@@ -112,53 +112,35 @@ def generate_build_and_push_workflow(
 
     registry_type = registry_config.get('type', 'ghcr')
 
-    # Extract ECR configuration
+    # Extract ECR configuration (only non-sensitive config values)
     ecr_config = registry_config.get('ecr', {})
     ecr_aws_region = ecr_config.get('aws_region', 'eu-central-1')
-    ecr_role_arn = ecr_config.get('role_arn')
-    ecr_registry_id = ecr_config.get('registry_id')
     ecr_repository_prefix = ecr_config.get('repository_prefix', 'ml-classifiers')
 
-    # Validate ECR configuration if type is 'ecr'
-    if registry_type == 'ecr':
-        missing_fields = []
-        if not ecr_role_arn:
-            missing_fields.append('deployment.registry.ecr.role_arn')
-        if not ecr_registry_id:
-            missing_fields.append('deployment.registry.ecr.registry_id')
-
-        if missing_fields:
-            raise ValueError(
-                f"ECR registry type selected but required fields are missing in mlserver.yaml:\n"
-                f"  - {', '.join(missing_fields)}\n\n"
-                f"Please set these values in your mlserver.yaml under deployment.registry.ecr"
-            )
+    # IMPORTANT: We always use GitHub repository variables for sensitive values
+    # Users must set these in their GitHub repository settings:
+    #   - AWS_DEV_ROLE_ARN: IAM role ARN for OIDC authentication
+    #   - ECR_REGISTRY_ID: AWS account ID / ECR registry ID
+    #   - ECR_REPOSITORY_PREFIX: (optional) Repository prefix, defaults to 'ml-classifiers'
 
     # Build AWS/ECR configuration strings for template
-    if ecr_role_arn:
-        aws_role_arn_value = f'"{ecr_role_arn}"'
-    else:
-        aws_role_arn_value = "${{ vars.AWS_DEV_ROLE_ARN }}"
-
-    if ecr_registry_id:
-        ecr_registry_value = f"'{ecr_registry_id}'"
-        ecr_registry_url = f"{ecr_registry_id}.dkr.ecr.{ecr_aws_region}.amazonaws.com"
-    else:
-        ecr_registry_value = "'${{ vars.ECR_REGISTRY_ID }}'"
-        ecr_registry_url = "${{ vars.ECR_REGISTRY_ID }}.dkr.ecr." + ecr_aws_region + ".amazonaws.com"
-
-    if ecr_repository_prefix:
-        ecr_repo_prefix_value = f'"{ecr_repository_prefix}"'
-    else:
-        ecr_repo_prefix_value = '"${{ vars.ECR_REPOSITORY_PREFIX || \'ml-classifiers\' }}"'
+    # Always use GitHub variables for sensitive credentials
+    aws_role_arn_value = "${{ vars.AWS_DEV_ROLE_ARN }}"
+    ecr_registry_value = "'${{ vars.ECR_REGISTRY_ID }}'"
+    ecr_registry_url = "${{ vars.ECR_REGISTRY_ID }}.dkr.ecr." + ecr_aws_region + ".amazonaws.com"
+    ecr_repo_prefix_value = f'"{ecr_repository_prefix}"'
 
     # Build header with current registry configuration
     if registry_type == 'ecr':
         config_info = f"""# Registry Configuration: AWS ECR
 #   - AWS Region: {ecr_aws_region}
-#   - Registry ID: {ecr_registry_id}
-#   - Role ARN: {ecr_role_arn}
-#   - Repository Prefix: {ecr_repository_prefix}"""
+#   - Repository Prefix: {ecr_repository_prefix}
+#   - Role ARN: Set via GitHub repository variable 'AWS_DEV_ROLE_ARN'
+#   - Registry ID: Set via GitHub repository variable 'ECR_REGISTRY_ID'
+#
+# Required GitHub Repository Variables:
+#   - AWS_DEV_ROLE_ARN: IAM role ARN for OIDC (e.g., arn:aws:iam::123456789012:role/GitHubActionsRole)
+#   - ECR_REGISTRY_ID: AWS account ID (e.g., 123456789012)"""
     else:
         config_info = """# Registry Configuration: GitHub Container Registry (GHCR)
 #   - Uses GITHUB_TOKEN for authentication
@@ -593,20 +575,22 @@ deployment:
 
 #### ECR
 
-Configure in `mlserver.yaml` under `deployment.registry`:
+**Step 1**: Configure registry type in `mlserver.yaml` under `deployment.registry`:
 
 ```yaml
 deployment:
   registry:
     type: "ecr"
     ecr:
-      aws_region: "eu-central-1"
-      role_arn: "arn:aws:iam::123456789012:role/GitHubActionsRole"
-      registry_id: "123456789012"
-      repository_prefix: "ml-classifiers"
+      aws_region: "eu-central-1"           # AWS region for ECR
+      repository_prefix: "ml-classifiers"  # Repository prefix (optional)
 ```
 
-After updating `mlserver.yaml`, regenerate the workflow:
+**Step 2**: Set required GitHub repository variables in your repository settings:
+- `AWS_DEV_ROLE_ARN`: IAM role ARN for OIDC (e.g., `arn:aws:iam::123456789012:role/GitHubActionsRole`)
+- `ECR_REGISTRY_ID`: AWS account ID (e.g., `123456789012`)
+
+**Step 3**: Regenerate the workflow:
 
 ```bash
 mlserver init-github --force
@@ -617,17 +601,32 @@ git push
 ### Permissions
 
 - **GHCR**: Requires `packages: write` (automatically granted with `GITHUB_TOKEN`)
-- **ECR**: Requires `id-token: write` for OIDC authentication
+- **ECR**: Requires `id-token: write` for OIDC authentication and GitHub repository variables
 """
         with open(readme_file, 'w') as f:
             f.write(readme_content)
 
         files_created["readme"] = str(readme_file.relative_to(project_path))
 
+    # Build registry-specific instructions
+    if registry_type == 'ecr':
+        registry_instructions = """
+Registry: AWS ECR
+
+⚠️  IMPORTANT: Before pushing tags, set these GitHub repository variables:
+   - AWS_DEV_ROLE_ARN: Your IAM role ARN for OIDC authentication
+   - ECR_REGISTRY_ID: Your AWS account ID
+
+   Go to: Settings → Secrets and variables → Actions → Variables
+"""
+    else:
+        registry_instructions = "\nRegistry: GitHub Container Registry (GHCR)"
+
     success_message = f"""✅ GitHub Actions CI/CD initialized successfully!
 
 Repository: {git_info['owner']}/{git_info['repo']}
 MLServer Source: {mlserver_url}
+{registry_instructions}
 
 Created files:
   - {files_created.get('workflow', 'N/A')}
@@ -640,7 +639,7 @@ Next steps:
   4. Create a version tag: mlserver tag patch --classifier <name>
   5. Push the tag: git push --tags
 
-The workflow will automatically build and publish your container to GHCR!
+The workflow will automatically build and publish your container!
 """
 
     return True, success_message, files_created
