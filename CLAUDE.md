@@ -2,7 +2,7 @@
 
 This is a Python project for `mlserver-fastapi-wrapper` - a tool that wraps Python predictor classes into FastAPI inference APIs via YAML configuration.
 
-For testing - consider ../test-installation, which contains a self-contained example and the corresponding test-scripts. You may read- and write to this folder!
+For testing - consider ../test-classifier, which contains a self-contained example and the corresponding test-scripts. You may read- and write to this folder!
 
 ## Git Commit Guidelines
 
