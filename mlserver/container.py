@@ -665,6 +665,27 @@ def generate_dockerfile(project_path: str, config: AppConfig,
     # Generate file copy commands
     copy_commands = []
 
+    def has_glob_chars(path):
+        """Check if path contains characters that Docker treats as glob patterns."""
+        return any(char in path for char in ['[', ']', '*', '?'])
+
+    def get_parent_without_glob(path):
+        """Get the nearest parent directory that doesn't contain glob characters."""
+        parts = path.split('/')
+        safe_parts = []
+
+        for part in parts:
+            if has_glob_chars(part):
+                # Stop before the part with special characters
+                break
+            safe_parts.append(part)
+
+        if safe_parts:
+            return '/'.join(safe_parts)
+        else:
+            # Everything has special chars, use root
+            return '.'
+
     # Group files by directory for efficient copying
     dirs_to_copy = set()
     files_to_copy = []
@@ -673,15 +694,46 @@ def generate_dockerfile(project_path: str, config: AppConfig,
         if '/' in file_path:
             # File in subdirectory
             dir_name = os.path.dirname(file_path)
+
+            # If directory has glob characters, use parent directory instead
+            # This avoids Docker COPY failures with special chars like [, ], *, ?
+            if has_glob_chars(dir_name):
+                dir_name = get_parent_without_glob(dir_name)
+
             dirs_to_copy.add(dir_name)
         else:
             # File in root
             files_to_copy.append(file_path)
 
+    # Remove child directories when parent is already included
+    # Sort by depth (shortest first) to process parents before children
+    sorted_dirs = sorted(dirs_to_copy, key=lambda x: x.count('/'))
+    minimal_dirs = []
+
+    for dir_name in sorted_dirs:
+        # Skip if this is a child of an already-included directory
+        is_redundant = False
+
+        if dir_name != '.':
+            for existing in minimal_dirs:
+                if existing == '.':
+                    # Root covers everything
+                    is_redundant = True
+                    break
+                if dir_name.startswith(existing + '/'):
+                    # This is a child of an existing directory
+                    is_redundant = True
+                    break
+
+        if not is_redundant:
+            minimal_dirs.append(dir_name)
+
     # Add copy commands for directories
-    # Note: Square brackets and other special chars are LITERAL in COPY, not glob patterns
-    for dir_name in sorted(dirs_to_copy):
-        copy_commands.append(f"COPY {dir_name}/ ./{dir_name}/")
+    for dir_name in minimal_dirs:
+        if dir_name == '.':
+            copy_commands.append("COPY . .")
+        else:
+            copy_commands.append(f"COPY {dir_name}/ ./{dir_name}/")
 
     # Add copy commands for individual files
     if files_to_copy:
