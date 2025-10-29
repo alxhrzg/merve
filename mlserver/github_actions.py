@@ -693,10 +693,15 @@ def parse_workflow_version(workflow_path: Path) -> Tuple[Optional[str], Optional
                 if len(parts) > 1:
                     mlserver_version = parts[1].strip()
             elif '# Workflow version:' in line:
-                # Extract: # Workflow version: 1.0
+                # Extract: # Workflow version: 1.0 (with optional comment)
+                # Extract only the version number, ignore comments in parentheses
                 parts = line.split(':')
                 if len(parts) > 1:
-                    workflow_version = parts[1].strip()
+                    version_str = parts[1].strip()
+                    # Extract just the version number (before any space or parenthesis)
+                    version_parts = version_str.split()
+                    if version_parts:
+                        workflow_version = version_parts[0]
 
         return mlserver_version, workflow_version
     except Exception:
