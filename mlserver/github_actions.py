@@ -132,7 +132,7 @@ def generate_build_and_push_workflow(
     # Role ARN: Always use GitHub variable (can differ per environment/repo)
     # Registry ID: Bake from mlserver.yaml (fixed for organization)
     # Region: Use environment variable from workflow env section
-    aws_role_arn_value = "${{ vars.AWS_DEV_ROLE_ARN }}"
+    aws_role_arn_value = "${{ vars.AWS_RUNNER_ROLE_ARN }}"
 
     if ecr_registry_id:
         ecr_registry_value = f"'{ecr_registry_id}'"
@@ -148,11 +148,11 @@ def generate_build_and_push_workflow(
         config_info = f"""# Registry Configuration: AWS ECR
 #   - AWS Region: {ecr_aws_region} (from mlserver.yaml, set in env.AWS_REGION)
 #   - Registry ID: {ecr_registry_id} (from mlserver.yaml, baked into workflow)
-#   - Role ARN: From GitHub repository variable 'AWS_DEV_ROLE_ARN'
+#   - Role ARN: From GitHub repository variable 'AWS_RUNNER_ROLE_ARN'
 #   - Repository Prefix: {ecr_repository_prefix} (from mlserver.yaml)
 #
 # Required GitHub Repository Variable:
-#   - AWS_DEV_ROLE_ARN: IAM role ARN for OIDC (e.g., arn:aws:iam::123456789012:role/GitHubActionsRole)
+#   - AWS_RUNNER_ROLE_ARN: IAM role ARN for OIDC (e.g., arn:aws:iam::123456789012:role/GitHubActionsRole)
 #
 # To update registry_id/region/prefix: modify mlserver.yaml and regenerate with mlserver init-github --force"""
     else:
@@ -603,7 +603,7 @@ deployment:
 
 **Step 2**: Set GitHub repository variable for IAM role:
 - Go to: Settings → Secrets and variables → Actions → Variables
-- Add variable: `AWS_DEV_ROLE_ARN` = `arn:aws:iam::123456789012:role/GitHubActionsRole`
+- Add variable: `AWS_RUNNER_ROLE_ARN` = `arn:aws:iam::123456789012:role/GitHubActionsRole`
 
 **Step 3**: Generate/update the workflow:
 
@@ -618,7 +618,7 @@ git push
 ### Permissions
 
 - **GHCR**: Requires `packages: write` (automatically granted with `GITHUB_TOKEN`)
-- **ECR**: Requires `id-token: write` for OIDC authentication and GitHub repository variable `AWS_DEV_ROLE_ARN`
+- **ECR**: Requires `id-token: write` for OIDC authentication and GitHub repository variable `AWS_RUNNER_ROLE_ARN`
 """
         with open(readme_file, 'w') as f:
             f.write(readme_content)
@@ -635,7 +635,7 @@ Registry: AWS ECR
   - Registry ID: {ecr_info.get('registry_id', 'N/A')} (baked into workflow)
 
 ⚠️  IMPORTANT: Set GitHub repository variable:
-   - AWS_DEV_ROLE_ARN: Your IAM role ARN for OIDC authentication
+   - AWS_RUNNER_ROLE_ARN: Your IAM role ARN for OIDC authentication
 
    Go to: Settings → Secrets and variables → Actions → Variables
 """
