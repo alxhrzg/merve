@@ -82,12 +82,23 @@ model:
 @pytest.fixture
 def mock_config():
     """Create a mock AppConfig for testing."""
+    from mlserver.config import ApiConfig
     return AppConfig(
         server=ServerConfig(host="0.0.0.0", port=8000),
         predictor=PredictorConfig(
             module="test.predictor",
             class_name="TestPredictor",
             init_kwargs={"model_path": "./model.pkl"}
+        ),
+        classifier={
+            "name": "test-classifier",
+            "version": "1.0.0",
+            "description": "Test classifier"
+        },
+        api=ApiConfig(
+            version="v1",
+            adapter="auto",
+            thread_safe_predict=False
         ),
         build=BuildConfig(
             registry="test-registry",

@@ -1,14 +1,21 @@
 import pytest
 import tempfile
 import os
+import sys
 import json
 import pickle
 from typing import Any, List
+from pathlib import Path
 import numpy as np
 import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.preprocessing import StandardScaler
 from prometheus_client import REGISTRY, CollectorRegistry
+
+# Ensure project root is on sys.path for proper module imports
+project_root = str(Path(__file__).parent.parent.resolve())
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
 
 from mlserver.config import AppConfig, ServerConfig, PredictorConfig, ApiConfig, ObservabilityConfig
 from mlserver.server import create_app
@@ -164,7 +171,7 @@ def basic_config():
             workers=1
         ),
         predictor=PredictorConfig(
-            module="tests.conftest",
+            module="tests.fixtures.mock_predictor",
             class_name="MockPredictor"
         ),
         classifier={
@@ -201,7 +208,7 @@ def config_with_preprocessing():
             workers=1
         ),
         predictor=PredictorConfig(
-            module="tests.conftest",
+            module="tests.fixtures.mock_predictor",
             class_name="MockPredictorWithPreprocessing",
             init_kwargs={
                 "feature_order": ["f1", "f2", "f3", "f4", "f5"]
@@ -236,7 +243,7 @@ def observability_config():
     return AppConfig(
         server=ServerConfig(title="Test ML Server - Observability"),
         predictor=PredictorConfig(
-            module="tests.conftest",
+            module="tests.fixtures.mock_predictor",
             class_name="MockPredictor"
         ),
         classifier={

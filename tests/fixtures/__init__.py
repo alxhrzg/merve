@@ -1,1 +1,1 @@
-"""Test fixtures for mlserver tests."""
+"""Test fixtures and mock classes."""
