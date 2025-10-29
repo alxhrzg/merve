@@ -184,6 +184,7 @@ def basic_config():
             adapter="auto",  # Use auto adapter to handle both records and ndarray formats
             feature_order=["f1", "f2", "f3", "f4", "f5"],
             thread_safe_predict=False,
+            max_concurrent_predictions=10,  # Allow concurrent requests for testing
             endpoints={
                 "predict": True,
                 "batch_predict": True,
@@ -224,6 +225,7 @@ def config_with_preprocessing():
             adapter="records",
             feature_order=["f1", "f2", "f3", "f4", "f5"],
             thread_safe_predict=False,
+            max_concurrent_predictions=10,  # Allow concurrent requests for testing
             endpoints={
                 "predict": True,
                 "batch_predict": True,

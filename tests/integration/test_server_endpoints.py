@@ -29,8 +29,7 @@ class TestPredictEndpoint:
         data = response.json()
         assert "predictions" in data
         assert "time_ms" in data
-        assert "model" in data
-        assert data["model"] == "MockPredictor"
+        assert "metadata" in data  # Updated: response now has metadata instead of model
         assert len(data["predictions"]) == 2  # Two records in sample
 
     async def test_predict_ndarray_format(self, async_client, sample_ndarray_payload):
@@ -73,7 +72,9 @@ class TestPredictEndpoint:
         assert isinstance(data["predictions"], list)
         assert isinstance(data["time_ms"], (int, float))
         assert data["time_ms"] >= 0
-        assert isinstance(data["model"], str)
+        # metadata is optional, so only check type if present
+        if data.get("metadata") is not None:
+            assert isinstance(data["metadata"], dict)
 
     async def test_predict_timing(self, async_client, sample_records_payload):
         response = await async_client.post("/predict", json=sample_records_payload)
@@ -93,7 +94,7 @@ class TestPredictProbaEndpoint:
         data = response.json()
         assert "probabilities" in data
         assert "time_ms" in data
-        assert "model" in data
+        assert "metadata" in data  # Updated: response now has metadata instead of model
 
     async def test_predict_proba_response_structure(self, async_client_preprocessing, sample_records_payload):
         response = await async_client_preprocessing.post("/predict_proba", json=sample_records_payload)
@@ -122,38 +123,9 @@ class TestPredictProbaEndpoint:
         assert response.status_code == 200
 
 
-class TestBatchPredictEndpoint:
-    """Test batch prediction endpoint"""
-
-    async def test_batch_predict_success(self, async_client_preprocessing):
-        # Large batch payload
-        batch_payload = {
-            "payload": {
-                "records": [
-                    {"f1": i, "f2": i+1, "f3": i+2, "f4": i+3, "f5": i+4}
-                    for i in range(10)
-                ]
-            }
-        }
-
-        response = await async_client_preprocessing.post("/batch_predict", json=batch_payload)
-        assert response.status_code == 200
-
-        data = response.json()
-        assert len(data["predictions"]) == 10
-
-    async def test_batch_predict_same_as_predict(self, async_client_preprocessing, sample_records_payload):
-        # Should give same results as regular predict
-        predict_response = await async_client_preprocessing.post("/predict", json=sample_records_payload)
-        batch_response = await async_client_preprocessing.post("/batch_predict", json=sample_records_payload)
-
-        assert predict_response.status_code == 200
-        assert batch_response.status_code == 200
-
-        predict_data = predict_response.json()
-        batch_data = batch_response.json()
-
-        assert predict_data["predictions"] == batch_data["predictions"]
+# TestBatchPredictEndpoint class REMOVED - batch_predict endpoint was removed
+# The /predict endpoint now handles both single and batch predictions naturally
+# See: mlserver/server.py line 473 - "batch_predict endpoint removed"
 
 
 class TestErrorHandling:
@@ -209,15 +181,16 @@ class TestErrorHandling:
             assert len(data["predictions"]) == 1000
 
     async def test_prediction_error_handling(self, async_client):
-        # Test payload that might cause prediction errors
+        # Test payload with extreme but valid values
+        # Note: float('inf') removed - not valid JSON
         edge_case_payload = {
             "payload": {
-                "ndarray": [[float('inf'), float('-inf'), 0, 0, 0]]
+                "ndarray": [[1e308, -1e308, 0, 0, 0]]  # Very large but valid numbers
             }
         }
         response = await async_client.post("/predict", json=edge_case_payload)
 
-        # Should handle gracefully
+        # Should handle gracefully (may return valid predictions or error)
         assert response.status_code in [200, 400, 500]
 
 
@@ -244,12 +217,12 @@ class TestConcurrency:
     async def test_mixed_endpoint_concurrency(self, async_client_preprocessing, sample_records_payload):
         import asyncio
 
-        # Mix different endpoints
+        # Mix different endpoints (batch_predict removed - /predict handles batches)
         tasks = [
             async_client_preprocessing.get("/healthz"),
             async_client_preprocessing.post("/predict", json=sample_records_payload),
             async_client_preprocessing.post("/predict_proba", json=sample_records_payload),
-            async_client_preprocessing.post("/batch_predict", json=sample_records_payload),
+            async_client_preprocessing.post("/predict", json=sample_records_payload),  # Test /predict concurrency
         ]
 
         responses = await asyncio.gather(*tasks)
@@ -307,15 +280,19 @@ class TestResponseValidation:
         response = await async_client.post("/predict", json=sample_records_payload)
         data = response.json()
 
-        # Required fields
-        required_fields = ["predictions", "time_ms", "model"]
+        # Required fields (metadata is optional, so not in required list)
+        required_fields = ["predictions", "time_ms"]
         for field in required_fields:
             assert field in data
 
         # Type validation
         assert isinstance(data["predictions"], list)
         assert isinstance(data["time_ms"], (int, float))
-        assert isinstance(data["model"], str)
+
+        # metadata is optional
+        assert "metadata" in data
+        if data["metadata"] is not None:
+            assert isinstance(data["metadata"], dict)
 
     async def test_health_response_schema(self, async_client):
         response = await async_client.get("/healthz")
