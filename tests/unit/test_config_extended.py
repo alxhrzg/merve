@@ -164,7 +164,7 @@ class TestApiConfigValidation:
         assert config.feature_order is None
         assert config.thread_safe_predict is False
         assert config.endpoints["predict"] is True
-        assert config.endpoints["batch_predict"] is True
+        # batch_predict removed - /predict handles batches
         assert config.endpoints["predict_proba"] is True
 
     def test_api_config_with_feature_order(self):
