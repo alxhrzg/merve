@@ -303,7 +303,89 @@ jobs:
           python -m mlserver.cli build --classifier "${{{{ steps.parse.outputs.classifier }}}}"
           echo "Container built successfully"
 
-      # Step 7: Verify container labels
+      # Step 7: Inspect Build Artifacts
+      - name: Inspect Build Artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "=================================================="
+          echo "📋 BUILD ARTIFACTS INSPECTION"
+          echo "=================================================="
+          echo ""
+
+          # Show Dockerfile
+          echo "📄 Generated Dockerfile:"
+          echo "--------------------------------------------------"
+          if [ -f "Dockerfile" ]; then
+            cat Dockerfile
+          else
+            echo "⚠️  Dockerfile not found in workspace"
+          fi
+          echo ""
+          echo "=================================================="
+          echo ""
+
+          # Extract and show mlserver.yaml from the container
+          echo "📄 Container mlserver.yaml (config inside container):"
+          echo "--------------------------------------------------"
+
+          # Create a temporary container to extract the config
+          TEMP_CONTAINER=$(docker create "{repo_name}/${{{{ steps.parse.outputs.classifier }}}}:latest")
+
+          # Copy mlserver.yaml from container
+          if docker cp "$TEMP_CONTAINER:/app/mlserver.yaml" "./mlserver.yaml.container" 2>/dev/null; then
+            cat "./mlserver.yaml.container"
+            rm -f "./mlserver.yaml.container"
+          else
+            echo "⚠️  Could not extract mlserver.yaml from container"
+          fi
+
+          # Clean up temporary container
+          docker rm "$TEMP_CONTAINER" >/dev/null 2>&1
+
+          echo ""
+          echo "=================================================="
+          echo ""
+
+          # Show summary
+          echo "ℹ️  Note: For multi-classifier repos, the container mlserver.yaml"
+          echo "   contains only the configuration for classifier: ${{{{ steps.parse.outputs.classifier }}}}"
+          echo "   (extracted from the multi-classifier source config)"
+          echo ""
+
+          # Also add to GitHub Actions step summary
+          echo "## 📋 Build Artifacts" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📄 Generated Dockerfile" >> $GITHUB_STEP_SUMMARY
+          echo '```dockerfile' >> $GITHUB_STEP_SUMMARY
+          if [ -f "Dockerfile" ]; then
+            cat Dockerfile >> $GITHUB_STEP_SUMMARY
+          else
+            echo "Dockerfile not found" >> $GITHUB_STEP_SUMMARY
+          fi
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          echo "### 📄 Container mlserver.yaml" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "> **Note**: For multi-classifier repos, this shows the extracted single-classifier config for \\\`${{{{ steps.parse.outputs.classifier }}}}\\\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo '```yaml' >> $GITHUB_STEP_SUMMARY
+
+          # Re-extract for summary (the file was already removed)
+          TEMP_CONTAINER2=$(docker create "{repo_name}/${{{{ steps.parse.outputs.classifier }}}}:latest")
+          if docker cp "$TEMP_CONTAINER2:/app/mlserver.yaml" "./mlserver.yaml.container2" 2>/dev/null; then
+            cat "./mlserver.yaml.container2" >> $GITHUB_STEP_SUMMARY
+            rm -f "./mlserver.yaml.container2"
+          else
+            echo "Could not extract mlserver.yaml from container" >> $GITHUB_STEP_SUMMARY
+          fi
+          docker rm "$TEMP_CONTAINER2" >/dev/null 2>&1
+
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+      # Step 8: Verify container labels
       - name: Verify Container Labels
         shell: bash
         run: |
@@ -311,7 +393,7 @@ jobs:
           echo "Inspecting container labels..."
           docker inspect "{repo_name}/${{{{ steps.parse.outputs.classifier }}}}:latest" | grep -A 20 '"Labels":' || true
 
-      # Step 8: Test container
+      # Step 9: Test container
       - name: Test Container
         shell: bash
         run: |
@@ -360,7 +442,7 @@ jobs:
           docker rm test-container
           echo "✅ Container tests passed"
 
-      # Step 9: Log in to GHCR (GHCR only)
+      # Step 10: Log in to GHCR (GHCR only)
       - name: Log in to GHCR
         if: env.REGISTRY_TYPE == 'ghcr'
         uses: docker/login-action@v3
@@ -369,7 +451,7 @@ jobs:
           username: ${{{{ github.actor }}}}
           password: ${{{{ secrets.GITHUB_TOKEN }}}}
 
-      # Step 10: Tag and Push to Registry
+      # Step 11: Tag and Push to Registry
       - name: Push to Registry
         id: push
         shell: bash
@@ -427,7 +509,7 @@ jobs:
 
           echo "✅ Successfully pushed all images to $REGISTRY_TYPE"
 
-      # Step 11: Summary
+      # Step 12: Summary
       - name: Build Summary
         shell: bash
         run: |
