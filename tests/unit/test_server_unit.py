@@ -132,11 +132,11 @@ class TestObservabilityMiddleware:
             # Execute middleware
             result = await middleware.dispatch(mock_request, mock_call_next)
 
-            # Verify calls
+            # Verify calls - API changed to use track_request instead of record_request_duration
             mock_set_correlation_id.assert_called_once()
             mock_metrics.inc_active_requests.assert_called_once()
             mock_metrics.dec_active_requests.assert_called_once()
-            mock_metrics.record_request_duration.assert_called_once()
+            mock_metrics.track_request.assert_called_once()  # Updated: was record_request_duration
             mock_log_request.assert_called_once()
             mock_log_response.assert_called_once()
 
@@ -217,8 +217,9 @@ class TestCreateApp:
 
             app = create_app(mock_config)
 
-            # Verify app creation
-            assert app.title == "MLServer FastAPI Wrapper"
+            # Verify app creation - title now generated from classifier name/version
+            expected_title = mock_config.get_api_title()  # "Test Model API v1.0.0"
+            assert app.title == expected_title
             mock_init_metrics.assert_called_once()
             mock_load_predictor.assert_called_once_with(mock_config.predictor)
 
@@ -232,8 +233,9 @@ class TestCreateApp:
 
             app = create_app(mock_config_minimal)
 
-            # Verify app creation
-            assert app.title == "MLServer FastAPI Wrapper"
+            # Verify app creation - title now generated from classifier name/version
+            expected_title = mock_config_minimal.get_api_title()  # "Test Model API v1.0.0"
+            assert app.title == expected_title
             mock_init_metrics.assert_not_called()
             mock_load_predictor.assert_called_once_with(mock_config_minimal.predictor)
 
@@ -249,7 +251,15 @@ class TestCreateApp:
                 module="mlserver.predictors.sklearn",
                 class_name="SKLearnPredictor",
                 init_kwargs={"model_path": "model.pkl"}
-            )
+            ),
+            classifier={
+                "name": "test-model",
+                "version": "1.0.0"
+            },
+            api={
+                "version": "v1",
+                "adapter": "auto"
+            }
         )
 
         with patch('mlserver.server.load_predictor') as mock_load_predictor:
@@ -403,7 +413,7 @@ class TestHelperFunctions:
             mock_log_prediction.assert_called_once()
 
     def test_track_prediction_metrics_without_metrics(self, mock_config_minimal):
-        """Test _track_prediction_metrics when metrics are disabled."""
+        """Test _track_prediction_metrics when metrics and structured logging are disabled."""
         with patch('mlserver.server.get_metrics') as mock_get_metrics, \
              patch('mlserver.server.log_prediction') as mock_log_prediction:
 
@@ -411,8 +421,8 @@ class TestHelperFunctions:
 
             _track_prediction_metrics("/predict", 0.5, 10, "TestModel", mock_config_minimal)
 
-            # Should not call track_prediction but should still log if structured logging enabled
-            mock_log_prediction.assert_called_once()
+            # Should not call any logging since mock_config_minimal has structured_logging=False
+            mock_log_prediction.assert_not_called()
 
     def test_to_jsonable_simple_types(self):
         """Test _to_jsonable with simple types."""
@@ -479,8 +489,9 @@ class TestHandlerFunctions:
             # Verify that a handler function was created
             assert callable(handler)
 
-    def test_app_lifespan_context(self, mock_config):
-        """Test app lifespan context functionality."""
+    @pytest.mark.asyncio
+    async def test_app_lifespan_context(self, mock_config):
+        """Test app lifespan context functionality - predictor loaded on startup."""
         with patch('mlserver.server.load_predictor') as mock_load_predictor:
             # Mock predictor with close method
             mock_predictor = Mock()
@@ -491,8 +502,13 @@ class TestHandlerFunctions:
                 mock_wrapper_class.return_value = mock_wrapper
                 mock_load_predictor.return_value = mock_predictor
 
-                # Create app to test lifespan
+                # Create app
                 app = create_app(mock_config)
 
-                # Verify predictor was loaded
-                mock_load_predictor.assert_called_once_with(mock_config.predictor)
+                # Predictor not loaded until lifespan starts
+                mock_load_predictor.assert_not_called()
+
+                # Enter lifespan context to trigger predictor loading
+                async with app.router.lifespan_context(app):
+                    # Now predictor should be loaded
+                    mock_load_predictor.assert_called_once_with(mock_config.predictor)
