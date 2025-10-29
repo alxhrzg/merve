@@ -223,19 +223,24 @@ class TestDetectRequiredFiles:
         result = detect_required_files(str(temp_project_dir), mock_config)
 
         assert isinstance(result, dict)
-        assert "detected_files" in result
-        assert "python_files" in result
-        assert "requirements_files" in result
-        assert "model_files" in result
+        # Check new return structure
+        assert "required_files" in result
+        assert "analysis" in result
 
         # Should detect our created files
-        detected = result["detected_files"]
-        assert "predictor.py" in detected
-        assert "model.pkl" in detected
-        assert "requirements.txt" in detected
+        required = result["required_files"]
+        assert "model.pkl" in required
+        assert "requirements.txt" in required
+        assert "mlserver.yaml" in required
+
+        # Check analysis structure
+        analysis = result["analysis"]
+        assert "artifact_files" in analysis
+        assert "config_files" in analysis
 
     def test_detect_required_files_with_config_refs(self, temp_project_dir):
         """Test file detection with config file references."""
+        from mlserver.config import ApiConfig
         config = AppConfig(
             predictor=PredictorConfig(
                 module="predictor",
@@ -245,6 +250,14 @@ class TestDetectRequiredFiles:
                     "preprocessor_path": "./preprocessor.pkl",
                     "feature_order_path": "./features.json"
                 }
+            ),
+            classifier={
+                "name": "test-classifier",
+                "version": "1.0.0"
+            },
+            api=ApiConfig(
+                version="v1",
+                adapter="auto"
             )
         )
 
@@ -254,27 +267,37 @@ class TestDetectRequiredFiles:
 
         result = detect_required_files(str(temp_project_dir), config)
 
-        detected = result["detected_files"]
-        assert "preprocessor.pkl" in detected
-        assert "features.json" in detected
+        required = result["required_files"]
+        assert "preprocessor.pkl" in required
+        assert "features.json" in required
 
     def test_detect_required_files_missing_files(self, temp_project_dir, mock_config):
         """Test file detection with missing files."""
         # Reference a file that doesn't exist
+        from mlserver.config import ApiConfig
         config = AppConfig(
             predictor=PredictorConfig(
                 module="predictor",
                 class_name="TestPredictor",
                 init_kwargs={"model_path": "./nonexistent.pkl"}
+            ),
+            classifier={
+                "name": "test-classifier",
+                "version": "1.0.0"
+            },
+            api=ApiConfig(
+                version="v1",
+                adapter="auto"
             )
         )
 
         result = detect_required_files(str(temp_project_dir), config)
 
-        # Should handle missing files gracefully
+        # Should handle missing files gracefully - function doesn't track missing files anymore
+        # Just check it returns valid structure
         assert isinstance(result, dict)
-        assert "missing_files" in result
-        assert "nonexistent.pkl" in result["missing_files"]
+        assert "required_files" in result
+        assert "analysis" in result
 
 
 class TestUtilityFunctions:
