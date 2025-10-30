@@ -177,6 +177,93 @@ class BuildConfig(BaseModel):
     exclude_patterns: Optional[List[str]] = Field(default=None, description="Patterns to exclude")
 
 
+class GitHubVariablesConfig(BaseModel):
+    """GitHub repository variables configuration for CI/CD workflows."""
+    aws_role_arn_var: str = Field(
+        default="AWS_RUNNER_ROLE_ARN",
+        description="Name of GitHub repository variable containing AWS IAM role ARN for OIDC authentication"
+    )
+    aws_role_arn_value: Optional[str] = Field(
+        default=None,
+        description="Direct AWS role ARN value to bake into workflow (alternative to variable, less secure)"
+    )
+
+
+class ECRConfig(BaseModel):
+    """AWS ECR (Elastic Container Registry) configuration."""
+    aws_region: str = Field(
+        default="eu-central-1",
+        description="AWS region for ECR"
+    )
+    registry_id: str = Field(
+        description="AWS account ID (12-digit number)"
+    )
+    repository_prefix: str = Field(
+        default="ml-classifiers",
+        description="Repository prefix for ECR image names"
+    )
+
+
+class RegistryConfig(BaseModel):
+    """Container registry configuration for deployments."""
+    type: str = Field(
+        default="ghcr",
+        description="Registry type: 'ghcr' (GitHub Container Registry) or 'ecr' (AWS Elastic Container Registry)"
+    )
+    url: Optional[str] = Field(
+        default=None,
+        description="Container registry URL (for GHCR, default: ghcr.io)"
+    )
+    namespace: Optional[str] = Field(
+        default=None,
+        description="Registry namespace (for GHCR, default: auto-detected from git)"
+    )
+    ecr: Optional[ECRConfig] = Field(
+        default=None,
+        description="ECR-specific configuration (required when type='ecr')"
+    )
+    github_variables: GitHubVariablesConfig = Field(
+        default_factory=GitHubVariablesConfig,
+        description="GitHub repository variables configuration"
+    )
+    push_on_build: bool = Field(
+        default=False,
+        description="Automatically push to registry after build"
+    )
+
+
+class DeploymentConfig(BaseModel):
+    """Deployment configuration for multi-classifier repositories."""
+    strategy: str = Field(
+        default="single",
+        description="Deployment strategy: 'single' or 'multi' for separate services"
+    )
+    container_naming: str = Field(
+        default="{repository}-{classifier}:{version}",
+        description="Container tag format template"
+    )
+    git_tag_format: str = Field(
+        default="{classifier}-v{version}",
+        description="Git tag format for releases"
+    )
+    parallel_builds: bool = Field(
+        default=True,
+        description="Enable parallel container builds for multiple classifiers"
+    )
+    registry: RegistryConfig = Field(
+        default_factory=RegistryConfig,
+        description="Container registry configuration"
+    )
+    resource_limits: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Resource limits for Kubernetes deployments"
+    )
+    health_check: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Health check configuration"
+    )
+
+
 class AppConfig(BaseModel):
     server: ServerConfig = ServerConfig()
     predictor: PredictorConfig
@@ -187,6 +274,7 @@ class AppConfig(BaseModel):
     model: Optional[Dict[str, Any]] = Field(default=None)  # Model metadata dict
     api: ApiConfig
     build: Optional[BuildConfig] = Field(default=None)
+    deployment: Optional[DeploymentConfig] = Field(default=None)  # Deployment configuration
 
     # Internal state
     classifier_metadata_internal: Optional[ClassifierMetadata] = Field(default=None, exclude=True)

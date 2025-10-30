@@ -129,10 +129,23 @@ def generate_build_and_push_workflow(
             )
 
     # Build AWS/ECR configuration strings for template
-    # Role ARN: Always use GitHub variable (can differ per environment/repo)
+    # Role ARN: Configurable via mlserver.yaml (can use GitHub variable or baked value)
     # Registry ID: Bake from mlserver.yaml (fixed for organization)
     # Region: Use environment variable from workflow env section
-    aws_role_arn_value = "${{ vars.AWS_RUNNER_ROLE_ARN }}"
+
+    # Get GitHub variables configuration
+    github_vars_config = registry_config.get('github_variables', {})
+    role_arn_var_name = github_vars_config.get('aws_role_arn_var', 'AWS_RUNNER_ROLE_ARN')
+    role_arn_direct_value = github_vars_config.get('aws_role_arn_value')
+
+    if role_arn_direct_value:
+        # Bake direct value (less secure, but simpler for some setups)
+        aws_role_arn_value = f'"{role_arn_direct_value}"'
+        role_arn_source = f"baked value (from mlserver.yaml)"
+    else:
+        # Use GitHub repository variable (recommended, more secure)
+        aws_role_arn_value = f"${{{{ vars.{role_arn_var_name} }}}}"
+        role_arn_source = f"GitHub variable '{role_arn_var_name}'"
 
     if ecr_registry_id:
         ecr_registry_value = f"'{ecr_registry_id}'"
@@ -145,16 +158,25 @@ def generate_build_and_push_workflow(
 
     # Build header with current registry configuration
     if registry_type == 'ecr':
+        # Build role ARN documentation based on configuration
+        if role_arn_direct_value:
+            role_arn_doc = f"""#   - Role ARN: {role_arn_direct_value} (baked from mlserver.yaml)
+#
+# ⚠️  Security Note: Role ARN is baked into workflow file. Consider using GitHub variable instead."""
+        else:
+            role_arn_doc = f"""#   - Role ARN: From {role_arn_source}
+#
+# Required GitHub Repository Variable:
+#   - {role_arn_var_name}: IAM role ARN for OIDC (e.g., arn:aws:iam::123456789012:role/GitHubActionsRole)
+#   Set at: Settings → Secrets and variables → Actions → Variables"""
+
         config_info = f"""# Registry Configuration: AWS ECR
 #   - AWS Region: {ecr_aws_region} (from mlserver.yaml, set in env.AWS_REGION)
 #   - Registry ID: {ecr_registry_id} (from mlserver.yaml, baked into workflow)
-#   - Role ARN: From GitHub repository variable 'AWS_RUNNER_ROLE_ARN'
+{role_arn_doc}
 #   - Repository Prefix: {ecr_repository_prefix} (from mlserver.yaml)
 #
-# Required GitHub Repository Variable:
-#   - AWS_RUNNER_ROLE_ARN: IAM role ARN for OIDC (e.g., arn:aws:iam::123456789012:role/GitHubActionsRole)
-#
-# To update registry_id/region/prefix: modify mlserver.yaml and regenerate with mlserver init-github --force"""
+# To update configuration: modify mlserver.yaml and regenerate with mlserver init-github --force"""
     else:
         config_info = """# Registry Configuration: GitHub Container Registry (GHCR)
 #   - Uses GITHUB_TOKEN for authentication
@@ -683,11 +705,20 @@ deployment:
       repository_prefix: "ml-classifiers" # Repository prefix (optional, default: "ml-classifiers")
 ```
 
-**Step 2**: Set GitHub repository variable for IAM role:
-- Go to: Settings → Secrets and variables → Actions → Variables
-- Add variable: `AWS_RUNNER_ROLE_ARN` = `arn:aws:iam::123456789012:role/GitHubActionsRole`
+**Step 2**: Configure GitHub variables (optional - customize variable name in mlserver.yaml):
 
-**Step 3**: Generate/update the workflow:
+```yaml
+deployment:
+  registry:
+    github_variables:
+      aws_role_arn_var: "AWS_DEV_ROLE_ARN"  # Customize variable name (default: AWS_RUNNER_ROLE_ARN)
+```
+
+**Step 3**: Set GitHub repository variable for IAM role:
+- Go to: Settings → Secrets and variables → Actions → Variables
+- Add variable: `{your_configured_variable_name}` = `arn:aws:iam::123456789012:role/GitHubActionsRole`
+
+**Step 4**: Generate/update the workflow:
 
 ```bash
 mlserver init-github --force
@@ -695,12 +726,12 @@ git add .github && git commit -m "Update workflow for ECR"
 git push
 ```
 
-**Note**: Registry ID and region are baked into the workflow from mlserver.yaml. The IAM role ARN comes from GitHub repository variable (allows per-repo/per-environment configuration).
+**Note**: Registry ID, region, and variable names are configured in mlserver.yaml. This allows environment-specific or organization-specific naming conventions.
 
 ### Permissions
 
 - **GHCR**: Requires `packages: write` (automatically granted with `GITHUB_TOKEN`)
-- **ECR**: Requires `id-token: write` for OIDC authentication and GitHub repository variable `AWS_RUNNER_ROLE_ARN`
+- **ECR**: Requires `id-token: write` for OIDC authentication and GitHub repository variable (name configured in mlserver.yaml)
 """
         with open(readme_file, 'w') as f:
             f.write(readme_content)
@@ -711,15 +742,25 @@ git push
     registry_type = registry_config.get('type', 'ghcr') if registry_config else 'ghcr'
     if registry_type == 'ecr':
         ecr_info = registry_config.get('ecr', {})
+        gh_vars = registry_config.get('github_variables', {})
+        var_name = gh_vars.get('aws_role_arn_var', 'AWS_RUNNER_ROLE_ARN')
+        baked_value = gh_vars.get('aws_role_arn_value')
+
+        if baked_value:
+            role_arn_instruction = f"""⚠️  Role ARN baked into workflow: {baked_value}
+   Security: Consider using GitHub variable instead for better security"""
+        else:
+            role_arn_instruction = f"""⚠️  IMPORTANT: Set GitHub repository variable:
+   - {var_name}: Your IAM role ARN for OIDC authentication
+
+   Go to: Settings → Secrets and variables → Actions → Variables"""
+
         registry_instructions = f"""
 Registry: AWS ECR
   - Region: {ecr_info.get('aws_region', 'eu-central-1')} (baked into workflow)
   - Registry ID: {ecr_info.get('registry_id', 'N/A')} (baked into workflow)
 
-⚠️  IMPORTANT: Set GitHub repository variable:
-   - AWS_RUNNER_ROLE_ARN: Your IAM role ARN for OIDC authentication
-
-   Go to: Settings → Secrets and variables → Actions → Variables
+{role_arn_instruction}
 """
     else:
         registry_instructions = "\nRegistry: GitHub Container Registry (GHCR)"
